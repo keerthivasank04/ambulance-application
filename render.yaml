@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: tn-ambulance-backend
+    runtime: node
+    plan: free
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: ADMIN_TOKEN
+        generateValue: true
+      - key: GPS_API_KEY
+        generateValue: true
+      - key: CORS_ORIGINS
+        value: ""

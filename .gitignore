@@ -1,0 +1,13 @@
+# Ambulance App
+
+node_modules/
+dist/
+ambulance.db
+ambulance.db-shm
+ambulance.db-wal
+.env
+.expo/
+*.apk
+build_error.txt
+testing/report/
+*.log

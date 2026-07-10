@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, Tooltip, Polyline, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import { usePolling } from '../hooks/usePolling';
+import { useSmoothPosition, computeBearing } from '../hooks/useSmoothPosition';
 import { fetchRequest, fetchSignals } from '../services/api';
 import { getSocket, joinRequestRoom } from '../services/socket';
 
@@ -55,9 +56,38 @@ const makeBadge = (glyphSvg, color, size = 30, pulse = false) => L.divIcon({
   iconAnchor: [size / 2, size / 2],
 });
 
-const ambulanceIcon = (color, pulse) => makeBadge(AMBULANCE_SVG, color, 32, pulse);
-const hospitalIcon  = () => makeBadge(HOSPITAL_SVG, '#16A34A', 28);
-const patientIcon   = () => makeBadge(PATIENT_SVG, '#DC2626', 26);
+// Ambulance badge + a small compass-style direction wedge that rotates to
+// face the way the vehicle is actually moving (bearing 0 = north/up),
+// the same visual language Rapido/Uber-style live tracking uses.
+const ambulanceIcon = (color, pulse, bearing = 0) => {
+  const size = 32;
+  return L.divIcon({
+    className: '',
+    html: `
+      <div style="position:relative;width:${size}px;height:${size}px">
+        <div style="
+          position:absolute;left:50%;top:50%;width:0;height:0;
+          transform:translate(-50%,-50%) rotate(${bearing}deg) translateY(-${size / 2 + 6}px);
+          border-left:6px solid transparent;border-right:6px solid transparent;
+          border-bottom:9px solid ${color};
+          transition:transform 0.4s ease;
+        "></div>
+        <div style="position:absolute;inset:0;background:white;border-radius:50%;border:2.5px solid ${color};box-shadow:0 2px 8px rgba(0,0,0,0.3);display:flex;align-items:center;justify-content:center;color:${color};">
+          ${AMBULANCE_SVG}
+        </div>
+        ${pulse ? `<div style="
+          position:absolute;inset:-6px;border-radius:50%;border:2px solid ${color};
+          opacity:0.55;animation:pulse-ring 1.6s ease-out infinite;
+        "></div>` : ''}
+      </div>
+    `,
+    iconSize: [size, size],
+    iconAnchor: [size / 2, size / 2],
+  });
+};
+
+const hospitalIcon = () => makeBadge(HOSPITAL_SVG, '#16A34A', 28);
+const patientIcon  = () => makeBadge(PATIENT_SVG, '#DC2626', 26);
 
 const signalMarkerIcon = (status) => {
   const c = status === 'green_corridor' ? '#16A34A' : '#94A3B8';
@@ -76,14 +106,21 @@ function haversineKm(lat1, lng1, lat2, lng2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
+// Smoothly, continuously pans the camera to follow the (already-interpolated)
+// ambulance position every animation frame, instead of jumping the view on
+// each discrete GPS tick.
 function MapFollower({ lat, lng }) {
   const map = useMap();
-  const last = useRef(null);
   useEffect(() => {
-    if (!lat || !lng) return;
-    const key = `${lat.toFixed(4)},${lng.toFixed(4)}`;
-    if (key !== last.current) { map.panTo([lat, lng], { animate: true, duration: 0.8 }); last.current = key; }
+    if (lat == null || lng == null) return;
+    map.panTo([lat, lng], { animate: true, duration: 0.3, easeLinearity: 1 });
   }, [map, lat, lng]);
+  return null;
+}
+
+function MapRefCapture({ mapRef }) {
+  const map = useMap();
+  useEffect(() => { mapRef.current = map; }, [map, mapRef]);
   return null;
 }
 
@@ -109,8 +146,11 @@ export default function LiveTracking() {
   const { id } = useParams();
   const [req, setReq]       = useState(null);
   const [ambPos, setAmbPos] = useState(null);
+  const [bearing, setBearing] = useState(0);
   const [wsConnected, setWsConnected] = useState(false);
   const [error, setError]   = useState('');
+  const prevAmbRef = useRef(null);
+  const mapRef = useRef(null);
 
   const fetcher = useCallback(() => fetchRequest(id), [id]);
   const { data: polledReq, error: pollErr } = usePolling(fetcher, 4000);
@@ -132,6 +172,11 @@ export default function LiveTracking() {
     if (sock.connected) setWsConnected(true);
     sock.on('ambulance:location', payload => {
       if (String(payload.request_id) === String(id)) {
+        const prev = prevAmbRef.current;
+        if (prev && haversineKm(prev.lat, prev.lng, payload.lat, payload.lng) > 0.005) {
+          setBearing(computeBearing(prev.lat, prev.lng, payload.lat, payload.lng));
+        }
+        prevAmbRef.current = { lat: payload.lat, lng: payload.lng };
         setAmbPos({ lat: payload.lat, lng: payload.lng, speed: payload.speed_kmh, ts: payload.timestamp });
       }
     });
@@ -148,6 +193,12 @@ export default function LiveTracking() {
       sock.off('request:status');
     };
   }, [id]);
+
+  // Hooks must run unconditionally, so the smoothing hook is called here,
+  // before the loading/error early-returns below.
+  const ambLatRaw = ambPos?.lat ?? req?.amb_lat;
+  const ambLngRaw = ambPos?.lng ?? req?.amb_lng;
+  const smoothPos = useSmoothPosition(ambLatRaw, ambLngRaw, 1800);
 
   if (error) return (
     <div className="container" style={{ padding: '2rem 1.5rem' }}>
@@ -166,8 +217,8 @@ export default function LiveTracking() {
     </div>
   );
 
-  const ambLat      = ambPos?.lat ?? req.amb_lat;
-  const ambLng      = ambPos?.lng ?? req.amb_lng;
+  const ambLat      = smoothPos?.lat ?? ambLatRaw;
+  const ambLng      = smoothPos?.lng ?? ambLngRaw;
   const speed       = ambPos?.speed ?? req.current_speed_kmh ?? 0;
   const isEnRoute   = req.status === 'enroute';
   const isToHosp    = req.status === 'enroute_hospital';
@@ -185,6 +236,12 @@ export default function LiveTracking() {
   const routeDistanceKm = routeTarget && ambLat && ambLng
     ? haversineKm(ambLat, ambLng, routeTarget.lat, routeTarget.lng).toFixed(1)
     : null;
+
+  const recenter = () => {
+    if (mapRef.current && ambLat && ambLng) {
+      mapRef.current.panTo([ambLat, ambLng], { animate: true, duration: 0.5 });
+    }
+  };
 
   return (
     <div style={{ background: 'var(--bg)', minHeight: 'calc(100vh - 95px)' }}>
@@ -333,8 +390,18 @@ export default function LiveTracking() {
           {/* Map */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
             <div className="map-panel">
+              {!isComplete && !isCancelled && speed > 0 && (
+                <div className="map-live-pill">
+                  <span className="dot dot-green dot-pulse" />
+                  {speed} km/h
+                </div>
+              )}
+              <button type="button" className="map-recenter-btn" onClick={recenter} title="Recenter on ambulance">
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
+              </button>
               <MapContainer center={mapCenter} zoom={14} style={{ height: 480, width: '100%' }}>
                 <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" attribution="© OpenStreetMap" />
+                <MapRefCapture mapRef={mapRef} />
                 {ambLat && ambLng && <MapFollower lat={ambLat} lng={ambLng} />}
 
                 {routeSignals.filter(s => s.lat && s.lng).map(s => (
@@ -356,7 +423,7 @@ export default function LiveTracking() {
                   </Marker>
                 )}
                 {ambLat && ambLng && (
-                  <Marker position={[ambLat, ambLng]} icon={ambulanceIcon('#2563EB', !isComplete && !isCancelled)}>
+                  <Marker position={[ambLat, ambLng]} icon={ambulanceIcon('#2563EB', !isComplete && !isCancelled, bearing)}>
                     <Popup>
                       <strong>{req.registration_number || 'Ambulance'}</strong>
                       {speed > 0 && <><br />{speed} km/h</>}

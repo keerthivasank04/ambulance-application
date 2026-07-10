@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { ThemeProvider } from './context/ThemeContext';
 import { ToastProvider } from './context/ToastContext';
@@ -16,7 +17,21 @@ function RequireAdmin({ children }) {
   return children;
 }
 
+// Browsers can restore a page from the back/forward cache (bfcache) as a
+// frozen snapshot — no React re-render, no auth re-check — so a signed-out
+// admin dashboard or a driver's in-memory session can reappear untouched
+// when the user hits Back/Forward. Forcing a reload on a bfcache restore
+// makes every protected route re-evaluate its guard from scratch.
+function useBfcacheReload() {
+  useEffect(() => {
+    const onPageShow = (e) => { if (e.persisted) window.location.reload(); };
+    window.addEventListener('pageshow', onPageShow);
+    return () => window.removeEventListener('pageshow', onPageShow);
+  }, []);
+}
+
 function App() {
+  useBfcacheReload();
   return (
     <ThemeProvider>
       <ToastProvider>

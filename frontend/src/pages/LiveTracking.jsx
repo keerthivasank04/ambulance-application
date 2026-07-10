@@ -1,28 +1,52 @@
 import { useParams } from 'react-router-dom';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, Tooltip, Polyline, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import { usePolling } from '../hooks/usePolling';
-import { fetchRequest } from '../services/api';
+import { fetchRequest, fetchSignals } from '../services/api';
 import { getSocket, joinRequestRoom } from '../services/socket';
 
-// ── Map icons ──────────────────────────────────────────────────────────────
-const makeIcon = (color, size = 16, pulse = false) => L.divIcon({
+// ── Map icon glyphs ──────────────────────────────────────────────────────────
+const AMBULANCE_SVG = `
+  <svg width="17" height="17" viewBox="0 0 24 24" fill="none">
+    <rect x="1" y="8" width="15" height="8" rx="1.5" fill="currentColor"/>
+    <rect x="15" y="10" width="7" height="6" rx="1" fill="currentColor"/>
+    <rect x="6.2" y="10.2" width="5.6" height="1.6" fill="white"/>
+    <rect x="8.2" y="8.2" width="1.6" height="5.6" fill="white"/>
+    <circle cx="6" cy="17.5" r="1.8" fill="#1F2937"/>
+    <circle cx="18" cy="17.5" r="1.8" fill="#1F2937"/>
+  </svg>`;
+
+const HOSPITAL_SVG = `
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
+    <rect x="9.5" y="3" width="5" height="18" rx="1" fill="currentColor"/>
+    <rect x="3" y="9.5" width="18" height="5" rx="1" fill="currentColor"/>
+  </svg>`;
+
+const PATIENT_SVG = `
+  <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
+    <circle cx="12" cy="7.5" r="4" fill="currentColor"/>
+    <path d="M4.5 21c0-4.1 3.4-7.5 7.5-7.5s7.5 3.4 7.5 7.5" fill="currentColor"/>
+  </svg>`;
+
+const makeBadge = (glyphSvg, color, size = 30, pulse = false) => L.divIcon({
   className: '',
   html: `
     <div style="position:relative;width:${size}px;height:${size}px">
       <div style="
         position:absolute;inset:0;
-        background:${color};
+        background:white;
         border-radius:50%;
-        border:2.5px solid white;
-        box-shadow:0 2px 8px rgba(0,0,0,0.35),0 0 0 2px ${color}50;
-      "></div>
+        border:2.5px solid ${color};
+        box-shadow:0 2px 8px rgba(0,0,0,0.3);
+        display:flex;align-items:center;justify-content:center;
+        color:${color};
+      ">${glyphSvg}</div>
       ${pulse ? `<div style="
-        position:absolute;inset:-5px;
+        position:absolute;inset:-6px;
         border-radius:50%;
         border:2px solid ${color};
-        opacity:0.6;
+        opacity:0.55;
         animation:pulse-ring 1.6s ease-out infinite;
       "></div>` : ''}
     </div>
@@ -30,6 +54,27 @@ const makeIcon = (color, size = 16, pulse = false) => L.divIcon({
   iconSize: [size, size],
   iconAnchor: [size / 2, size / 2],
 });
+
+const ambulanceIcon = (color, pulse) => makeBadge(AMBULANCE_SVG, color, 32, pulse);
+const hospitalIcon  = () => makeBadge(HOSPITAL_SVG, '#16A34A', 28);
+const patientIcon   = () => makeBadge(PATIENT_SVG, '#DC2626', 26);
+
+const signalMarkerIcon = (status) => {
+  const c = status === 'green_corridor' ? '#16A34A' : '#94A3B8';
+  return L.divIcon({
+    className: '',
+    html: `<div style="width:11px;height:18px;background:${c};border-radius:3px;border:1.5px solid white;box-shadow:0 0 6px ${c}90;"></div>`,
+    iconSize: [11, 18], iconAnchor: [5.5, 18],
+  });
+};
+
+function haversineKm(lat1, lng1, lat2, lng2) {
+  const R = 6371;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLng = (lng2 - lng1) * Math.PI / 180;
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
 
 function MapFollower({ lat, lng }) {
   const map = useMap();
@@ -71,6 +116,11 @@ export default function LiveTracking() {
   const { data: polledReq, error: pollErr } = usePolling(fetcher, 4000);
   useEffect(() => { if (polledReq) setReq(polledReq); }, [polledReq]);
   useEffect(() => { if (pollErr) setError(pollErr); }, [pollErr]);
+
+  const signalsFetcher = useCallback(() => fetchSignals(), []);
+  const { data: signalsData } = usePolling(signalsFetcher, 8000);
+  const signals = signalsData || [];
+  const routeSignals = signals.filter(s => String(s.requestId) === String(id) && s.status === 'green_corridor');
 
   useEffect(() => {
     const sock = getSocket();
@@ -128,6 +178,13 @@ export default function LiveTracking() {
   const mapCenter   = ambLat && ambLng ? [ambLat, ambLng]
     : req.patient_lat ? [req.patient_lat, req.patient_lng]
     : [13.0827, 80.2707];
+
+  const routeTarget = isEnRoute && req.patient_lat ? { lat: req.patient_lat, lng: req.patient_lng, color: '#2563EB', label: 'to patient' }
+    : isToHosp && req.hospital_lat ? { lat: req.hospital_lat, lng: req.hospital_lng, color: '#16A34A', label: 'to hospital' }
+    : null;
+  const routeDistanceKm = routeTarget && ambLat && ambLng
+    ? haversineKm(ambLat, ambLng, routeTarget.lat, routeTarget.lng).toFixed(1)
+    : null;
 
   return (
     <div style={{ background: 'var(--bg)', minHeight: 'calc(100vh - 95px)' }}>
@@ -214,7 +271,7 @@ export default function LiveTracking() {
               <div className="unit-detail-row">
                 {[
                   { label: 'Ambulance', value: req.registration_number ? `${req.registration_number} · ${req.ambulance_type}` : null },
-                  { label: 'Driver', value: req.driver_name ? `${req.driver_name}${req.driver_rating ? ` · ⭐ ${req.driver_rating}` : ''}` : null },
+                  { label: 'Driver', value: req.driver_name },
                   { label: 'Hospital', value: req.hospital_name },
                   { label: 'Address', value: req.hospital_address },
                   { label: 'Hospital Phone', value: req.hospital_phone },
@@ -229,6 +286,25 @@ export default function LiveTracking() {
                 ) : null)}
               </div>
             </div>
+
+            {routeSignals.length > 0 && (
+              <div className="card panel" style={{ borderColor: 'rgba(22,163,74,0.3)' }}>
+                <div className="panel-header" style={{ justifyContent: 'flex-start', gap: '0.5rem', background: 'rgba(22,163,74,0.06)', borderBottomColor: 'rgba(22,163,74,0.2)', color: 'var(--green)' }}>
+                  <span className="dot dot-green dot-pulse" />
+                  Signals Cleared Along Route ({routeSignals.length})
+                </div>
+                {routeSignals.map(s => (
+                  <div key={s.id} className="signal-row">
+                    <span className="dot dot-green dot-pulse" />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: '0.8125rem', fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.name}</div>
+                      {s.distanceKm != null && <div style={{ fontSize: '0.7rem', color: 'var(--text-3)' }}>{s.distanceKm} km from ambulance</div>}
+                    </div>
+                    <span className="badge badge-completed" style={{ flexShrink: 0 }}>OPEN</span>
+                  </div>
+                ))}
+              </div>
+            )}
 
             {req.status_logs?.length > 0 && (
               <div className="card panel">
@@ -261,46 +337,61 @@ export default function LiveTracking() {
                 <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" attribution="© OpenStreetMap" />
                 {ambLat && ambLng && <MapFollower lat={ambLat} lng={ambLng} />}
 
+                {routeSignals.filter(s => s.lat && s.lng).map(s => (
+                  <Marker key={s.id} position={[s.lat, s.lng]} icon={signalMarkerIcon(s.status)}>
+                    <Tooltip direction="top">{s.name} — cleared</Tooltip>
+                  </Marker>
+                ))}
+
                 {req.patient_lat && (
-                  <Marker position={[req.patient_lat, req.patient_lng]} icon={makeIcon('#DC2626', 18)}>
+                  <Marker position={[req.patient_lat, req.patient_lng]} icon={patientIcon()}>
+                    <Tooltip direction="top" offset={[0, -14]}>Patient Location</Tooltip>
                     <Popup><strong>Patient Location</strong><br />{req.patient_name}</Popup>
                   </Marker>
                 )}
                 {req.hospital_lat && (
-                  <Marker position={[req.hospital_lat, req.hospital_lng]} icon={makeIcon('#16A34A', 18)}>
+                  <Marker position={[req.hospital_lat, req.hospital_lng]} icon={hospitalIcon()}>
+                    <Tooltip direction="top" offset={[0, -14]} permanent>{req.hospital_name || 'Destination Hospital'}</Tooltip>
                     <Popup><strong>{req.hospital_name}</strong><br />{req.hospital_address}</Popup>
                   </Marker>
                 )}
                 {ambLat && ambLng && (
-                  <Marker position={[ambLat, ambLng]} icon={makeIcon('#2563EB', 22, !isComplete && !isCancelled)}>
+                  <Marker position={[ambLat, ambLng]} icon={ambulanceIcon('#2563EB', !isComplete && !isCancelled)}>
                     <Popup>
                       <strong>{req.registration_number || 'Ambulance'}</strong>
                       {speed > 0 && <><br />{speed} km/h</>}
                     </Popup>
                   </Marker>
                 )}
-                {isEnRoute && ambLat && req.patient_lat && (
-                  <Polyline positions={[[ambLat, ambLng], [req.patient_lat, req.patient_lng]]}
-                    color="#2563EB" dashArray="10 14" weight={2.5} opacity={0.7} />
-                )}
-                {isToHosp && ambLat && req.hospital_lat && (
-                  <Polyline positions={[[ambLat, ambLng], [req.hospital_lat, req.hospital_lng]]}
-                    color="#16A34A" dashArray="10 14" weight={2.5} opacity={0.7} />
+
+                {routeTarget && ambLat && ambLng && (
+                  <Polyline positions={[[ambLat, ambLng], [routeTarget.lat, routeTarget.lng]]}
+                    color={routeTarget.color} dashArray="10 14" weight={3.5} opacity={0.8}>
+                    {routeDistanceKm && (
+                      <Tooltip direction="center" permanent>{routeDistanceKm} km {routeTarget.label}</Tooltip>
+                    )}
+                  </Polyline>
                 )}
               </MapContainer>
             </div>
 
             <div className="map-legend">
               {[
-                { color: '#DC2626', label: 'Patient Location' },
                 { color: '#2563EB', label: 'Ambulance (live)' },
-                { color: '#16A34A', label: 'Hospital' },
+                { color: '#DC2626', label: 'Patient Location' },
+                { color: '#16A34A', label: 'Destination Hospital' },
               ].map(({ color, label }) => (
                 <div key={label} className="map-legend-item">
                   <span className="map-legend-dot" style={{ background: color }} />
                   {label}
                 </div>
               ))}
+              {routeSignals.length > 0 && (
+                <div className="map-legend-item">
+                  <span className="map-legend-dot" style={{ background: '#16A34A', borderRadius: 2, width: 6, height: 12 }} />
+                  Signal Cleared
+                </div>
+              )}
               {!isComplete && !isCancelled && (
                 <div style={{ marginLeft: 'auto', fontSize: '0.75rem', color: 'var(--text-3)', fontWeight: 600 }}>
                   Map auto-follows ambulance

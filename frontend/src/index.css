@@ -904,6 +904,17 @@ tbody tr:hover { background: var(--surface-2); }
 
 .summary-bar { display: flex; align-items: center; gap: 0.875rem; flex-wrap: wrap; padding: 0.75rem 1rem; background: var(--surface-2); border-radius: 9px; margin-bottom: 1.25rem; border: 1px solid var(--border); }
 
+.location-method-tabs { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
+.location-method-tab { flex: 1; padding: 0.625rem 0.5rem; border-radius: 9px; border: 1.5px solid var(--border); background: var(--surface); font-size: 0.8125rem; font-weight: 600; color: var(--text-2); cursor: pointer; text-align: center; }
+.location-method-tab:hover { background: var(--surface-2); }
+.location-method-tab.active { background: var(--tn-navy); color: white; border-color: var(--tn-navy); }
+.location-search-results { border: 1px solid var(--border); border-radius: 9px; overflow: hidden; margin-top: 0.625rem; max-height: 220px; overflow-y: auto; }
+.location-search-result { padding: 0.625rem 0.875rem; border-bottom: 1px solid var(--border-light); cursor: pointer; font-size: 0.8125rem; color: var(--text-2); }
+.location-search-result:last-child { border-bottom: none; }
+.location-search-result:hover { background: var(--surface-2); color: var(--text); }
+.location-map-picker { border-radius: 11px; overflow: hidden; border: 1.5px solid var(--border); height: 280px; }
+.etype-other-input { margin-top: 0.875rem; }
+
 /* ── Admin dashboard ── */
 .dashboard-header { background: var(--tn-navy); color: white; padding: 1rem 1.5rem; display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
 .panel { padding: 0; overflow: hidden; }

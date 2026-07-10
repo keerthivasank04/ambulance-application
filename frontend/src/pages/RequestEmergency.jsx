@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { MapContainer, TileLayer, Marker, useMapEvents } from 'react-leaflet';
+import L from 'leaflet';
 import { submitRequest } from '../services/api';
 
 const EMERGENCY_TYPES = [
@@ -19,6 +21,21 @@ const STEPS = [
   { n: 3, label: 'Your Details' },
 ];
 
+const PICKER_ICON = L.divIcon({
+  className: '',
+  html: `<div style="width:26px;height:26px;border-radius:50%;background:white;border:2.5px solid #DC2626;box-shadow:0 2px 8px rgba(0,0,0,0.3);display:flex;align-items:center;justify-content:center;color:#DC2626;">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="7.5" r="4" fill="currentColor"/><path d="M4.5 21c0-4.1 3.4-7.5 7.5-7.5s7.5 3.4 7.5 7.5" fill="currentColor"/></svg>
+  </div>`,
+  iconSize: [26, 26], iconAnchor: [13, 13],
+});
+
+function MapClickPicker({ onPick }) {
+  useMapEvents({
+    click(e) { onPick(e.latlng.lat, e.latlng.lng); },
+  });
+  return null;
+}
+
 export default function RequestEmergency() {
   const navigate = useNavigate();
   const [loading, setLoading]       = useState(false);
@@ -27,7 +44,14 @@ export default function RequestEmergency() {
   const [geoLoading, setGeoLoading] = useState(false);
   const [geoError, setGeoError]     = useState('');
   const [selectedType, setSelectedType] = useState('cardiac');
+  const [customType, setCustomType] = useState('');
   const [step, setStep]             = useState(1); // 1=location, 2=emergency, 3=details
+
+  const [locationMethod, setLocationMethod] = useState('gps'); // 'gps' | 'search' | 'map'
+  const [searchQuery, setSearchQuery]   = useState('');
+  const [searchResults, setSearchResults] = useState([]);
+  const [searching, setSearching]       = useState(false);
+  const [searchTried, setSearchTried]   = useState(false);
 
   // Auto-detect location on mount
   useEffect(() => {
@@ -56,10 +80,32 @@ export default function RequestEmergency() {
     );
   };
 
+  const searchAddress = async () => {
+    if (!searchQuery.trim() || searching) return;
+    setSearching(true);
+    setSearchTried(true);
+    setSearchResults([]);
+    try {
+      const url = `https://nominatim.openstreetmap.org/search?format=json&limit=5&countrycodes=in&q=${encodeURIComponent(searchQuery)}`;
+      const res = await fetch(url);
+      const data = await res.json();
+      setSearchResults(Array.isArray(data) ? data : []);
+    } catch {
+      setSearchResults([]);
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  const pickSearchResult = (result) => {
+    setCoords({ lat: +result.lat, lng: +result.lon });
+    setSearchResults([]);
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (loading) return;
-    if (!coords) return setError('Please allow location access before submitting.');
+    if (!coords) return setError('Please set a location before submitting.');
     setLoading(true);
     setError('');
     const fd = new FormData(e.target);
@@ -69,7 +115,7 @@ export default function RequestEmergency() {
         patient_name:   fd.get('name'),
         patient_age:    age ? +age : undefined,
         patient_phone:  fd.get('phone'),
-        emergency_type: selectedType,
+        emergency_type: isOther ? customType.trim() : selectedType,
         patient_notes:  fd.get('notes'),
         patient_lat:    coords.lat,
         patient_lng:    coords.lng,
@@ -83,6 +129,8 @@ export default function RequestEmergency() {
   };
 
   const selected = EMERGENCY_TYPES.find(t => t.value === selectedType);
+  const isOther  = selectedType === 'other';
+  const selectedLabel = isOther ? (customType.trim() || 'Other emergency') : selected?.label;
 
   return (
     <div style={{ background: 'var(--bg)', minHeight: 'calc(100vh - 95px)' }}>
@@ -132,42 +180,102 @@ export default function RequestEmergency() {
                 Your Location
               </h2>
               <p style={{ color: 'var(--text-2)', fontSize: '0.875rem', marginBottom: '1.5rem', lineHeight: 1.6 }}>
-                We need your GPS coordinates to dispatch the nearest ambulance. Please allow location access when prompted.
+                Use your current GPS location, search for an address, or drop a pin on the map — whichever is fastest.
               </p>
 
               {coords ? (
                 <div className="location-status detected">
                   <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--green-dark)" strokeWidth="2.5" strokeLinecap="round" style={{ flexShrink: 0 }}><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
                   <div>
-                    <div style={{ fontWeight: 700, color: 'var(--green-dark)' }}>Location detected successfully</div>
+                    <div style={{ fontWeight: 700, color: 'var(--green-dark)' }}>Location set successfully</div>
                     <code style={{ fontSize: '0.8rem', color: 'var(--text-2)' }}>
                       {coords.lat.toFixed(6)}, {coords.lng.toFixed(6)}
                     </code>
                   </div>
-                  <button type="button" onClick={detectLocation} className="btn btn-sm btn-ghost" style={{ marginLeft: 'auto', color: 'var(--green-dark)', borderColor: 'rgba(22,163,74,0.3)' }}>
-                    Re-detect
+                  <button type="button" onClick={() => setCoords(null)} className="btn btn-sm btn-ghost" style={{ marginLeft: 'auto', color: 'var(--green-dark)', borderColor: 'rgba(22,163,74,0.3)' }}>
+                    Change Location
                   </button>
                 </div>
               ) : (
-                <div className={`location-status pending ${geoError ? 'has-error' : ''}`}>
-                  {geoError ? (
-                    <div data-testid="geo-error" style={{ color: '#991B1B', fontSize: '0.875rem', marginBottom: '0.875rem' }}>
-                      {geoError}
-                    </div>
-                  ) : (
-                    <div style={{ color: 'var(--text-2)', fontSize: '0.875rem', marginBottom: '0.875rem' }}>
-                      {geoLoading ? 'Detecting your location...' : 'Location not yet detected'}
+                <>
+                  <div className="location-method-tabs">
+                    <button type="button" className={`location-method-tab ${locationMethod === 'gps' ? 'active' : ''}`} onClick={() => setLocationMethod('gps')}>
+                      Use My Location
+                    </button>
+                    <button type="button" className={`location-method-tab ${locationMethod === 'search' ? 'active' : ''}`} onClick={() => setLocationMethod('search')}>
+                      Search Address
+                    </button>
+                    <button type="button" className={`location-method-tab ${locationMethod === 'map' ? 'active' : ''}`} onClick={() => setLocationMethod('map')}>
+                      Pick on Map
+                    </button>
+                  </div>
+
+                  {locationMethod === 'gps' && (
+                    <div className={`location-status pending ${geoError ? 'has-error' : ''}`}>
+                      {geoError ? (
+                        <div data-testid="geo-error" style={{ color: '#991B1B', fontSize: '0.875rem', marginBottom: '0.875rem' }}>
+                          {geoError}
+                        </div>
+                      ) : (
+                        <div style={{ color: 'var(--text-2)', fontSize: '0.875rem', marginBottom: '0.875rem' }}>
+                          {geoLoading ? 'Detecting your location...' : 'Location not yet detected'}
+                        </div>
+                      )}
+                      <button type="button" onClick={detectLocation} disabled={geoLoading}
+                        data-testid="detect-location-btn" className="btn btn-primary btn-full">
+                        {geoLoading ? 'Detecting...' : 'Allow Location Access'}
+                      </button>
                     </div>
                   )}
-                  <button type="button" onClick={detectLocation} disabled={geoLoading}
-                    data-testid="detect-location-btn" className="btn btn-primary btn-full">
-                    {geoLoading ? 'Detecting...' : 'Allow Location Access'}
-                  </button>
-                </div>
+
+                  {locationMethod === 'search' && (
+                    <div>
+                      <div className="field">
+                        <label className="label">Search for an address or landmark</label>
+                        <div className="input-group">
+                          <input className="input" value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
+                            onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); searchAddress(); } }}
+                            placeholder="e.g. Anna Salai, T Nagar, Chennai" data-testid="address-search-input" />
+                          <button type="button" className="btn btn-primary" onClick={searchAddress} disabled={searching} data-testid="address-search-btn">
+                            {searching ? 'Searching…' : 'Search'}
+                          </button>
+                        </div>
+                      </div>
+                      {searchResults.length > 0 && (
+                        <div className="location-search-results" data-testid="address-search-results">
+                          {searchResults.map((r, i) => (
+                            <div key={i} className="location-search-result" onClick={() => pickSearchResult(r)}>
+                              {r.display_name}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {searchTried && !searching && searchResults.length === 0 && (
+                        <div style={{ fontSize: '0.8125rem', color: 'var(--text-3)', marginTop: '0.625rem' }}>
+                          No results found. Try a different search or use the map instead.
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {locationMethod === 'map' && (
+                    <div>
+                      <div className="location-map-picker">
+                        <MapContainer center={[13.0827, 80.2707]} zoom={12} style={{ height: '100%', width: '100%' }}>
+                          <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" attribution="© OpenStreetMap" />
+                          <MapClickPicker onPick={(lat, lng) => setCoords({ lat, lng })} />
+                        </MapContainer>
+                      </div>
+                      <p style={{ fontSize: '0.8125rem', color: 'var(--text-3)', marginTop: '0.625rem' }}>
+                        Tap anywhere on the map to drop a pin at the patient's location.
+                      </p>
+                    </div>
+                  )}
+                </>
               )}
 
               {coords && (
-                <button type="button" onClick={() => setStep(2)} data-testid="step1-continue" className="btn btn-danger btn-full btn-lg">
+                <button type="button" onClick={() => setStep(2)} data-testid="step1-continue" className="btn btn-danger btn-full btn-lg" style={{ marginTop: '1.25rem' }}>
                   Continue →
                 </button>
               )}
@@ -181,7 +289,7 @@ export default function RequestEmergency() {
                 Select Emergency Type
               </h2>
               <p style={{ color: 'var(--text-2)', fontSize: '0.875rem', marginBottom: '1.5rem' }}>
-                This determines ambulance priority and type (ICU/ALS/BLS) dispatched.
+                This determines ambulance priority and type (ICU/ALS/BLS) dispatched. If none of these match, describe it below.
               </p>
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '1.5rem' }}>
@@ -204,24 +312,48 @@ export default function RequestEmergency() {
                     </button>
                   );
                 })}
+
+                <button type="button" onClick={() => setSelectedType('other')}
+                  data-testid="etype-other"
+                  className={`etype-option ${isOther ? 'selected' : ''}`}
+                  style={{ borderColor: isOther ? 'var(--tn-navy)' : undefined, background: isOther ? 'rgba(26,58,107,0.05)' : undefined }}>
+                  <div className="etype-dot" style={{ background: 'var(--text-3)' }} />
+                  <div style={{ flex: 1, fontWeight: isOther ? 700 : 500, fontSize: '0.9rem', color: 'var(--text)' }}>
+                    Other — Not Listed
+                  </div>
+                </button>
               </div>
 
-              {selected && (
+              {isOther && (
+                <div className="field etype-other-input" style={{ marginBottom: '1.25rem' }}>
+                  <label className="label">Describe the emergency *</label>
+                  <input required={isOther} className="input" value={customType}
+                    onChange={e => setCustomType(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') e.preventDefault(); }}
+                    placeholder="e.g. Snake bite, electric shock, fall from height"
+                    data-testid="etype-other-input" />
+                </div>
+              )}
+
+              {(selected || isOther) && (
                 <div style={{
-                  padding: '0.75rem 1rem', background: `${selected.color}08`, border: `1.5px solid ${selected.color}25`,
+                  padding: '0.75rem 1rem', background: isOther ? 'rgba(26,58,107,0.05)' : `${selected.color}08`,
+                  border: `1.5px solid ${isOther ? 'rgba(26,58,107,0.2)' : `${selected.color}25`}`,
                   borderRadius: 9, marginBottom: '1.25rem', display: 'flex', alignItems: 'center', gap: '0.75rem',
                 }}>
-                  <div style={{ width: 8, height: 8, borderRadius: '50%', background: selected.color, flexShrink: 0 }} />
-                  <div style={{ fontWeight: 600, color: 'var(--text)', fontSize: '0.875rem' }}>{selected.label}</div>
+                  <div style={{ width: 8, height: 8, borderRadius: '50%', background: isOther ? 'var(--tn-navy)' : selected.color, flexShrink: 0 }} />
+                  <div style={{ fontWeight: 600, color: 'var(--text)', fontSize: '0.875rem' }}>{selectedLabel}</div>
                   <div style={{ marginLeft: 'auto', fontSize: '0.8125rem', color: 'var(--text-2)' }}>
-                    {selected.priority === 1 ? 'ICU/ALS dispatched — critical priority'
+                    {isOther ? 'ALS dispatched — priority assessed on arrival'
+                     : selected.priority === 1 ? 'ICU/ALS dispatched — critical priority'
                      : selected.priority === 2 ? 'ALS dispatched — high priority'
                      : 'BLS dispatched — standard priority'}
                   </div>
                 </div>
               )}
 
-              <button type="button" onClick={() => setStep(3)} data-testid="step2-continue" className="btn btn-danger btn-full btn-lg">
+              <button type="button" onClick={() => setStep(3)} disabled={isOther && !customType.trim()}
+                data-testid="step2-continue" className="btn btn-danger btn-full btn-lg">
                 Continue →
               </button>
             </div>
@@ -242,9 +374,9 @@ export default function RequestEmergency() {
                   <span className="dot dot-green dot-pulse" />
                   <span style={{ color: 'var(--green)', fontWeight: 700 }}>Location ready</span>
                 </div>
-                {selected && (
+                {(selected || isOther) && (
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem', fontSize: '0.8125rem', color: 'var(--text-2)' }}>
-                    <span>{selected.label}</span>
+                    <span>{selectedLabel}</span>
                     <button type="button" onClick={() => setStep(2)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.7rem', color: 'var(--blue)', fontWeight: 600 }}>
                       Change
                     </button>

@@ -1,31 +1,25 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, Tooltip } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, Tooltip, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import { usePolling } from '../hooks/usePolling';
+import { ambulanceIcon, signalMarkerIcon as signalIcon } from '../utils/mapIcons';
 import { fetchAdminStats, fetchLiveAmbulances, fetchSignals } from '../services/api';
 import { getSocket, joinAdminRoom } from '../services/socket';
 import { useToast } from '../context/ToastContext';
 
-// ── Map icons ──────────────────────────────────────────────────────────────
-const ambulanceIcon = (color, size = 14) => L.divIcon({
-  className: '',
-  html: `<div style="
-    background:${color};width:${size}px;height:${size}px;
-    border-radius:50%;border:2.5px solid white;
-    box-shadow:0 2px 6px rgba(0,0,0,0.4),0 0 0 3px ${color}40;
-  "></div>`,
-  iconSize: [size, size],
-  iconAnchor: [size / 2, size / 2],
-});
-
-const signalIcon = (status) => {
-  const c = status === 'green_corridor' ? '#16A34A' : '#DC2626';
-  return L.divIcon({
-    className: '',
-    html: `<div style="width:10px;height:16px;background:${c};border-radius:3px;border:1.5px solid white;box-shadow:0 0 6px ${c}90;"></div>`,
-    iconSize: [10, 16], iconAnchor: [5, 16],
-  });
-};
+// Frames the map to show every marker once, on the first render after data
+// arrives — not on every subsequent GPS update, so the view doesn't jump
+// around every few seconds while the admin is actively looking at it.
+function MapAutoFit({ positions }) {
+  const map = useMap();
+  const fitted = useRef(false);
+  useEffect(() => {
+    if (fitted.current || positions.length === 0) return;
+    map.fitBounds(L.latLngBounds(positions), { padding: [32, 32], maxZoom: 13 });
+    fitted.current = true;
+  }, [map, positions]);
+  return null;
+}
 
 const AMB_COLORS = {
   available:   '#16A34A',
@@ -236,6 +230,7 @@ export default function AdminDashboard() {
               </div>
               <MapContainer center={[13.0827, 80.2707]} zoom={11} style={{ height: 'calc(100% - 45px)', width: '100%' }} ref={mapRef}>
                 <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" attribution="© OpenStreetMap" />
+                <MapAutoFit positions={ambulances.filter(a => a.current_lat && a.current_lng).map(a => [a.current_lat, a.current_lng])} />
                 {signals.map(s => s.lat && s.lng ? (
                   <Marker key={s.id} position={[s.lat, s.lng]} icon={signalIcon(s.status)}>
                     <Tooltip permanent={s.status === 'green_corridor'} direction="top">
@@ -244,7 +239,7 @@ export default function AdminDashboard() {
                   </Marker>
                 ) : null)}
                 {ambulances.map(a => a.current_lat && a.current_lng ? (
-                  <Marker key={a.id} position={[a.current_lat, a.current_lng]} icon={ambulanceIcon(AMB_COLORS[a.status] || '#6B7280')}>
+                  <Marker key={a.id} position={[a.current_lat, a.current_lng]} icon={ambulanceIcon(AMB_COLORS[a.status] || '#6B7280', false, null, 22)}>
                     <Popup>
                       <div style={{ fontSize: '0.8125rem', lineHeight: 1.75, minWidth: 160 }}>
                         <div style={{ fontWeight: 800, marginBottom: '0.25rem' }}>
@@ -311,7 +306,7 @@ export default function AdminDashboard() {
                       <div style={{ flex: 1 }}>
                         <div style={{ fontSize: '0.8125rem', fontWeight: 700 }}>{s.id}</div>
                         <div style={{ fontSize: '0.75rem', color: 'var(--text-2)' }}>{s.name}</div>
-                        {s.distanceKm && <div style={{ fontSize: '0.7rem', color: 'var(--green)', fontWeight: 600 }}>{s.distanceKm} km</div>}
+                        {s.distanceKm != null && <div style={{ fontSize: '0.7rem', color: 'var(--green)', fontWeight: 600 }}>{s.distanceKm} km</div>}
                       </div>
                       <span style={{ fontSize: '0.65rem', fontWeight: 700, padding: '0.15rem 0.5rem', borderRadius: 4, background: 'rgba(22,163,74,0.1)', color: 'var(--green)', border: '1px solid rgba(22,163,74,0.25)' }}>
                         OPEN
@@ -345,6 +340,7 @@ export default function AdminDashboard() {
               <div className="panel-header" style={{ justifyContent: 'flex-start' }}>Signal Map</div>
               <MapContainer center={[13.0400, 80.2100]} zoom={11} style={{ height: 'calc(100% - 45px)', width: '100%' }}>
                 <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" attribution="© OpenStreetMap" />
+                <MapAutoFit positions={signals.filter(s => s.lat && s.lng).map(s => [s.lat, s.lng])} />
                 {signals.map(s => (
                   <Marker key={s.id} position={[s.lat, s.lng]} icon={signalIcon(s.status)}>
                     <Popup>
@@ -363,7 +359,7 @@ export default function AdminDashboard() {
                 ))}
                 {(ambulances || []).filter(a => ['assigned', 'enroute', 'enroute_hospital'].includes(a.status)).map(a =>
                   a.current_lat && a.current_lng ? (
-                    <Marker key={a.id} position={[a.current_lat, a.current_lng]} icon={ambulanceIcon('#2563EB', 16)}>
+                    <Marker key={a.id} position={[a.current_lat, a.current_lng]} icon={ambulanceIcon('#2563EB', false, null, 20)}>
                       <Tooltip direction="top" permanent>
                         <span style={{ fontSize: '0.75rem' }}>{a.registration_number}</span>
                       </Tooltip>

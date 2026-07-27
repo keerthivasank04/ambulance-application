@@ -59,6 +59,7 @@ export default function RequestEmergency() {
   const [searchResults, setSearchResults] = useState([]);
   const [searching, setSearching]       = useState(false);
   const [searchTried, setSearchTried]   = useState(false);
+  const [mapPickPoint, setMapPickPoint] = useState(null); // tentative pin, before "Confirm"
 
   // Auto-detect location on mount
   useEffect(() => {
@@ -109,6 +110,11 @@ export default function RequestEmergency() {
   const pickSearchResult = (result) => {
     setCoords({ lat: +result.lat, lng: +result.lon });
     setSearchResults([]);
+  };
+
+  const resetLocation = () => {
+    setCoords(null);
+    setMapPickPoint(null);
   };
 
   const handleSubmit = async (e) => {
@@ -198,7 +204,7 @@ export default function RequestEmergency() {
                   <div style={{ color: '#991B1B', fontSize: '0.875rem', marginBottom: '0.875rem' }}>
                     This location is outside Chennai. This service currently operates only within Chennai city and its immediate suburbs — please call <strong>108</strong> directly if you're elsewhere.
                   </div>
-                  <button type="button" onClick={() => setCoords(null)} className="btn btn-primary btn-full">
+                  <button type="button" onClick={resetLocation} className="btn btn-primary btn-full">
                     Choose a Different Location
                   </button>
                 </div>
@@ -211,7 +217,7 @@ export default function RequestEmergency() {
                       {coords.lat.toFixed(6)}, {coords.lng.toFixed(6)}
                     </code>
                   </div>
-                  <button type="button" onClick={() => setCoords(null)} className="btn btn-sm btn-ghost" style={{ marginLeft: 'auto', color: 'var(--green-dark)', borderColor: 'rgba(22,163,74,0.3)' }}>
+                  <button type="button" onClick={resetLocation} className="btn btn-sm btn-ghost" style={{ marginLeft: 'auto', color: 'var(--green-dark)', borderColor: 'rgba(22,163,74,0.3)' }}>
                     Change Location
                   </button>
                 </div>
@@ -282,12 +288,21 @@ export default function RequestEmergency() {
                       <div className="location-map-picker">
                         <MapContainer center={[13.0827, 80.2707]} zoom={12} style={{ height: '100%', width: '100%' }}>
                           <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" attribution="© OpenStreetMap" />
-                          <MapClickPicker onPick={(lat, lng) => setCoords({ lat, lng })} />
+                          <MapClickPicker onPick={(lat, lng) => setMapPickPoint({ lat, lng })} />
+                          {mapPickPoint && <Marker position={[mapPickPoint.lat, mapPickPoint.lng]} icon={PICKER_ICON} />}
                         </MapContainer>
                       </div>
                       <p style={{ fontSize: '0.8125rem', color: 'var(--text-3)', marginTop: '0.625rem' }}>
-                        Tap anywhere on the map to drop a pin at the patient's location.
+                        {mapPickPoint
+                          ? 'Tap again to move the pin, or confirm below.'
+                          : 'Tap anywhere on the map to drop a pin at the patient’s location.'}
                       </p>
+                      {mapPickPoint && (
+                        <button type="button" className="btn btn-danger btn-full" style={{ marginTop: '0.75rem' }}
+                          onClick={() => setCoords(mapPickPoint)}>
+                          Confirm This Location
+                        </button>
+                      )}
                     </div>
                   )}
                 </>

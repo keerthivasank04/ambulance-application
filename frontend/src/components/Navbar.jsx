@@ -1,6 +1,7 @@
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useState, useEffect } from 'react';
 import { useTheme } from '../context/ThemeContext';
+import { useLanguage } from '../context/LanguageContext';
 import { getSocket } from '../services/socket';
 
 const SunIcon = () => (
@@ -29,15 +30,30 @@ const XIcon = () => (
 );
 
 const LINKS = [
-  { to: '/request', label: 'Request Ambulance', accent: 'accent-red' },
-  { to: '/driver',  label: 'Driver Portal',     accent: 'accent-blue' },
-  { to: '/admin',   label: 'Control Room',      accent: 'accent-navy' },
+  { to: '/request', key: 'navRequest', accent: 'accent-red' },
+  { to: '/driver',  key: 'navDriver',  accent: 'accent-blue' },
+  { to: '/admin',   key: 'navAdmin',   accent: 'accent-navy' },
 ];
+
+const FONT_SCALES = ['sm', 'md', 'lg'];
+
+function useFontScale() {
+  const [scale, setScale] = useState(() => {
+    try { return localStorage.getItem('fontScale') || 'sm'; } catch { return 'sm'; }
+  });
+  useEffect(() => {
+    document.documentElement.setAttribute('data-font-scale', scale);
+    try { localStorage.setItem('fontScale', scale); } catch { /* storage unavailable */ }
+  }, [scale]);
+  return [scale, setScale];
+}
 
 export default function Navbar() {
   const { pathname } = useLocation();
   const navigate = useNavigate();
   const { theme, toggle } = useTheme();
+  const { lang, setLang, t } = useLanguage();
+  const [fontScale, setFontScale] = useFontScale();
   const [menuOpen, setMenuOpen] = useState(false);
   const [wsConnected, setWsConnected] = useState(false);
   const isAdmin = !!localStorage.getItem('admin_token');
@@ -63,12 +79,36 @@ export default function Navbar() {
 
   return (
     <header className="navbar">
+      <a href="#main-content" className="a11y-skip-link">{t('skipToContent')}</a>
+
+      <div className="tricolor-strip"><span /><span /><span /></div>
+
+      <div className="a11y-bar">
+        <span className="a11y-bar-label">{t('emergencyServices')}</span>
+        <div className="a11y-controls">
+          <div className="a11y-group" role="group" aria-label="Text size">
+            {FONT_SCALES.map(s => (
+              <button key={s} className={`a11y-btn ${fontScale === s ? 'active' : ''}`}
+                onClick={() => setFontScale(s)} title="Adjust text size"
+                aria-label={`Text size ${s}`}>
+                {s === 'sm' ? 'A-' : s === 'md' ? 'A' : 'A+'}
+              </button>
+            ))}
+          </div>
+          <span className="a11y-divider" />
+          <div className="a11y-group" role="group" aria-label="Language">
+            <button className={`a11y-btn ${lang === 'en' ? 'active' : ''}`} onClick={() => setLang('en')}>EN</button>
+            <button className={`a11y-btn ${lang === 'ta' ? 'active' : ''}`} onClick={() => setLang('ta')}>தமிழ்</button>
+          </div>
+        </div>
+      </div>
+
       <div className="govt-banner">
-        <span>Government of Tamil Nadu &nbsp;|&nbsp; National Health Mission &nbsp;|&nbsp; <strong>108 Emergency Services</strong></span>
+        <span>{t('govtOfTN')} &nbsp;|&nbsp; {t('nhm')} &nbsp;|&nbsp; <strong>{t('emergencyServices')}</strong></span>
         <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem' }}>
-          <span style={{ opacity: 0.6 }}>Free · 24/7 · Chennai City</span>
+          <span style={{ opacity: 0.6 }}>{t('freeTagline')}</span>
           <a href="tel:108" style={{ fontWeight: 700, fontSize: '0.82rem', color: '#FCD34D', letterSpacing: '0.04em' }}>
-            Call 108
+            {t('callBtn')}
           </a>
         </div>
       </div>
@@ -91,10 +131,10 @@ export default function Navbar() {
           <div className="navbar-spacer" />
 
           <div className="navbar-links">
-            {LINKS.map(({ to, label, accent }) => (
+            {LINKS.map(({ to, key, accent }) => (
               <Link key={to} to={to} data-testid={`nav-link-${to.replace('/', '')}`}
                 className={`navbar-link ${isActive(to) ? `active ${accent}` : ''}`}>
-                {label}
+                {t(key)}
               </Link>
             ))}
           </div>
@@ -128,10 +168,10 @@ export default function Navbar() {
 
         {menuOpen && (
           <div className="navbar-mobile-menu">
-            {LINKS.map(({ to, label }) => (
+            {LINKS.map(({ to, key }) => (
               <Link key={to} to={to} onClick={() => setMenuOpen(false)}
                 className={`navbar-mobile-link ${isActive(to) ? 'active' : ''}`}>
-                {label}
+                {t(key)}
               </Link>
             ))}
             {isAdmin && onAdmin && (

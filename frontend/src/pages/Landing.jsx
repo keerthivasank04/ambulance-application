@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import { fetchPublicStats } from '../services/api';
+import { useLanguage } from '../context/LanguageContext';
 
 const STEPS = [
   {
@@ -25,9 +26,9 @@ const FEATURES = [
 ];
 
 const PORTALS = [
-  { to: '/request', label: 'Request Ambulance', desc: 'Submit an emergency request online' },
-  { to: '/driver',  label: 'Driver Portal',     desc: 'Login to receive dispatch assignments' },
-  { to: '/admin',   label: 'Control Room',      desc: 'Fleet management and signal control' },
+  { to: '/request', label: 'Request Ambulance', desc: 'Submit an emergency request online and get the nearest unit dispatched instantly.', icon: 'dispatch' },
+  { to: '/driver',  label: 'Driver Portal',     desc: 'Registered ambulance drivers sign in here to receive and manage dispatch assignments.', icon: 'fleet' },
+  { to: '/admin',   label: 'Control Room',      desc: 'Fleet operations, live tracking, and traffic signal management for authorized staff.', icon: 'signal' },
 ];
 
 function FeatureIcon({ icon }) {
@@ -37,8 +38,15 @@ function FeatureIcon({ icon }) {
   return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--amber)" strokeWidth="2.5" strokeLinecap="round"><rect x="1" y="3" width="15" height="13" rx="1"/><path d="M16 8h4l3 4v4h-7V8z"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>;
 }
 
+function ServiceIcon({ icon }) {
+  if (icon === 'dispatch') return <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--tn-red)" strokeWidth="2.2" strokeLinecap="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>;
+  if (icon === 'fleet')    return <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--tn-red)" strokeWidth="2.2" strokeLinecap="round"><rect x="1" y="3" width="15" height="13" rx="1"/><path d="M16 8h4l3 4v4h-7V8z"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>;
+  return <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--tn-red)" strokeWidth="2.2" strokeLinecap="round"><rect x="5" y="2" width="14" height="20" rx="2"/><circle cx="12" cy="7" r="1.5" fill="var(--tn-red)"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="17" r="1.5"/></svg>;
+}
+
 export default function Landing() {
   const [stats, setStats] = useState(null);
+  const { t } = useLanguage();
 
   useEffect(() => {
     fetchPublicStats().then(setStats).catch(() => {});
@@ -49,22 +57,21 @@ export default function Landing() {
       <section className="hero">
         <div className="container hero-grid">
           <div>
-            <div className="hero-eyebrow">Government of Tamil Nadu — National Health Mission</div>
+            <div className="hero-eyebrow">{t('govtOfTN')} — {t('nhm')}</div>
 
             <div className="hero-title-row">
               <span className="hero-number">108</span>
-              <span className="hero-subtitle">Emergency<br />Ambulance</span>
+              <span className="hero-subtitle">{t('heroEmergencyWord')}<br />{t('heroAmbulanceWord')}</span>
             </div>
 
             <p className="hero-desc">
-              Chennai's free emergency medical service, available 24/7 across the city.
-              Call <strong style={{ color: 'white' }}>108</strong> or request online — the nearest ambulance is dispatched within seconds.
+              {t('heroDesc')} Call <strong style={{ color: 'white' }}>108</strong> {t('heroDescTail')}
             </p>
 
             <div className="hero-actions">
-              <Link to="/request" className="btn btn-danger btn-lg">Request Ambulance</Link>
-              <a href="tel:108" className="btn btn-ghost btn-lg" style={{ color: 'white', borderColor: 'rgba(255,255,255,0.25)' }}>Call 108</a>
-              <Link to="/driver" className="btn btn-ghost btn-lg" style={{ color: 'rgba(255,255,255,0.8)', borderColor: 'rgba(255,255,255,0.15)' }}>Driver Login</Link>
+              <Link to="/request" className="btn btn-danger btn-lg">{t('heroCTA')}</Link>
+              <a href="tel:108" className="btn btn-ghost btn-lg" style={{ color: 'white', borderColor: 'rgba(255,255,255,0.25)' }}>{t('callBtn')}</a>
+              <Link to="/driver" className="btn btn-ghost btn-lg" style={{ color: 'rgba(255,255,255,0.8)', borderColor: 'rgba(255,255,255,0.15)' }}>{t('heroDriverCTA')}</Link>
             </div>
           </div>
 
@@ -144,25 +151,58 @@ export default function Landing() {
         </div>
       </section>
 
-      <section className="section section-dark" style={{ padding: '3rem 1.5rem' }}>
-        <div className="container portal-grid">
-          {PORTALS.map(({ to, label, desc }) => (
-            <Link key={to} to={to} className="portal-link">
-              <div className="portal-link-title">{label}</div>
-              <div className="portal-link-desc">{desc}</div>
-            </Link>
-          ))}
+      <section className="section" style={{ background: 'var(--bg)' }}>
+        <div className="container">
+          <div className="section-header">
+            <p className="section-eyebrow">{t('ourServices')}</p>
+            <h2 className="section-heading">Everything you need, in one place</h2>
+          </div>
+
+          <div className="portal-grid">
+            {PORTALS.map(({ to, label, desc, icon }) => (
+              <Link key={to} to={to} className="service-card">
+                <div className="service-card-icon"><ServiceIcon icon={icon} /></div>
+                <div className="service-card-title">{label}</div>
+                <div className="service-card-desc">{desc}</div>
+                <div className="service-card-cta">
+                  View Service
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+                </div>
+              </Link>
+            ))}
+          </div>
         </div>
       </section>
 
       <footer className="site-footer">
-        <div className="container site-footer-inner">
-          <div className="site-footer-links">
-            {['Government of Tamil Nadu', 'National Health Mission', 'Health & Family Welfare Dept.'].map(t => (
-              <span key={t} className="site-footer-item">{t}</span>
-            ))}
+        <div className="container site-footer-columns">
+          <div className="site-footer-col">
+            <div className="site-footer-col-title">108 Ambulance</div>
+            <span>Tamil Nadu's emergency medical response service for Chennai. Free, 24/7, and dispatched in seconds.</span>
           </div>
-          <span className="site-footer-item">© 2025 108 Emergency Services</span>
+          <div className="site-footer-col">
+            <div className="site-footer-col-title">Quick Links</div>
+            <Link to="/request">Request Ambulance</Link>
+            <Link to="/driver">Driver Portal</Link>
+            <Link to="/admin">Control Room</Link>
+          </div>
+          <div className="site-footer-col">
+            <div className="site-footer-col-title">Important Links</div>
+            <a href="https://www.india.gov.in" target="_blank" rel="noreferrer">National Portal of India</a>
+            <a href="https://www.tn.gov.in" target="_blank" rel="noreferrer">Government of Tamil Nadu</a>
+            <a href="https://nhm.gov.in" target="_blank" rel="noreferrer">National Health Mission</a>
+          </div>
+          <div className="site-footer-col">
+            <div className="site-footer-col-title">Accessibility</div>
+            <span>This site follows GIGW accessibility guidelines.</span>
+            <span>Screen Reader Access available</span>
+          </div>
+        </div>
+        <div className="container site-footer-bottom">
+          <span className="site-footer-item">
+            {t('govtOfTN')} · {t('nhm')} · {t('footerHealthDept')}
+          </span>
+          <span className="site-footer-item">© {new Date().getFullYear()} 108 Emergency Services · Content last updated {new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
         </div>
       </footer>
     </div>

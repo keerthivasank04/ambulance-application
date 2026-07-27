@@ -2,7 +2,9 @@ import { useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { ThemeProvider } from './context/ThemeContext';
 import { ToastProvider } from './context/ToastContext';
+import { LanguageProvider } from './context/LanguageContext';
 import Navbar from './components/Navbar';
+import Breadcrumbs from './components/Breadcrumbs';
 import Landing from './pages/Landing';
 import RequestEmergency from './pages/RequestEmergency';
 import LiveTracking from './pages/LiveTracking';
@@ -34,23 +36,26 @@ function App() {
   useBfcacheReload();
   return (
     <ThemeProvider>
-      <ToastProvider>
-        <BrowserRouter>
-          <div className="app-shell">
-            <Navbar />
-            <main className="page">
-              <Routes>
-                <Route path="/"            element={<Landing />} />
-                <Route path="/request"     element={<RequestEmergency />} />
-                <Route path="/track/:id"   element={<LiveTracking />} />
-                <Route path="/driver"      element={<DriverApp />} />
-                <Route path="/admin/login" element={<AdminLogin />} />
-                <Route path="/admin"       element={<RequireAdmin><AdminDashboard /></RequireAdmin>} />
-              </Routes>
-            </main>
-          </div>
-        </BrowserRouter>
-      </ToastProvider>
+      <LanguageProvider>
+        <ToastProvider>
+          <BrowserRouter>
+            <div className="app-shell">
+              <Navbar />
+              <Breadcrumbs />
+              <main className="page" id="main-content">
+                <Routes>
+                  <Route path="/"            element={<Landing />} />
+                  <Route path="/request"     element={<RequestEmergency />} />
+                  <Route path="/track/:id"   element={<LiveTracking />} />
+                  <Route path="/driver"      element={<DriverApp />} />
+                  <Route path="/admin/login" element={<AdminLogin />} />
+                  <Route path="/admin"       element={<RequireAdmin><AdminDashboard /></RequireAdmin>} />
+                </Routes>
+              </main>
+            </div>
+          </BrowserRouter>
+        </ToastProvider>
+      </LanguageProvider>
     </ThemeProvider>
   );
 }

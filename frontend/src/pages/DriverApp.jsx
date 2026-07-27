@@ -223,9 +223,9 @@ export default function DriverApp() {
               <div className="dispatch-detail-grid">
                 {[
                   { label: 'Emergency Type', value: req.emergency_type, cap: true },
-                  { label: 'Contact Number', value: req.patient_phone || req.contact_phone },
+                  { label: 'Contact Number', value: req.patient_phone },
                   { label: 'Destination Hospital', value: req.hospital_name },
-                  { label: 'Distance', value: req.distance_km ? `${req.distance_km} km` : null },
+                  { label: 'Distance', value: req.distance_km != null ? `${req.distance_km} km` : null },
                 ].map(({ label, value, cap }) => value ? (
                   <div key={label}>
                     <div className="dispatch-detail-label">{label}</div>

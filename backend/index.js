@@ -17,6 +17,7 @@ const hospitalsRoute  = require('./src/routes/hospitals');
 const adminRoute      = require('./src/routes/admin');
 const devicesRoute    = require('./src/routes/devices');
 const signalsRoute    = require('./src/routes/signals');
+const publicStatsRoute = require('./src/routes/publicStats');
 
 const app    = express();
 const server = http.createServer(app);
@@ -60,6 +61,7 @@ app.use('/api/drivers',       driversRoute);
 app.use('/api/hospitals',     hospitalsRoute);
 app.use('/api/admin',         adminRoute);
 app.use('/api/signals',       signalsRoute);
+app.use('/api/stats',         publicStatsRoute);
 
 // ── Health check ───────────────────────────────────────────────────────────
 app.get('/api/health', (_req, res) => {

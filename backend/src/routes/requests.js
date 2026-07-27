@@ -6,6 +6,10 @@ const { startSimulation }    = require('../services/gpsSimulator');
 const { clearCorridorForRequest } = require('../services/trafficSignal');
 const { syncRequestToFirebase, syncRideCompletedToFirebase } = require('../services/firebaseSync');
 
+// Service area: Chennai city + immediate metropolitan suburbs (Tambaram,
+// Porur, Sholinganallur, etc.) — generous box, not a tight city boundary.
+const CHENNAI_BOUNDS = { minLat: 12.75, maxLat: 13.30, minLng: 79.95, maxLng: 80.35 };
+
 // POST /api/requests — Submit emergency request
 router.post('/', (req, res) => {
   const { patient_name, patient_age, patient_phone, patient_notes,
@@ -18,6 +22,9 @@ router.post('/', (req, res) => {
   const lat = +patient_lat, lng = +patient_lng;
   if (!Number.isFinite(lat) || !Number.isFinite(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
     return res.status(400).json({ error: 'patient_lat/patient_lng must be valid coordinates' });
+  }
+  if (lat < CHENNAI_BOUNDS.minLat || lat > CHENNAI_BOUNDS.maxLat || lng < CHENNAI_BOUNDS.minLng || lng > CHENNAI_BOUNDS.maxLng) {
+    return res.status(400).json({ error: 'This service currently operates only within Chennai. Please call 108 directly if you are outside the city.' });
   }
   if (patient_age !== undefined && patient_age !== null && patient_age !== '') {
     const age = +patient_age;

@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import { useEffect, useState } from 'react';
-import { fetchAdminStats } from '../services/api';
+import { fetchPublicStats } from '../services/api';
 
 const STEPS = [
   {
@@ -41,7 +41,7 @@ export default function Landing() {
   const [stats, setStats] = useState(null);
 
   useEffect(() => {
-    fetchAdminStats().then(setStats).catch(() => {});
+    fetchPublicStats().then(setStats).catch(() => {});
   }, []);
 
   return (
@@ -57,7 +57,7 @@ export default function Landing() {
             </div>
 
             <p className="hero-desc">
-              Tamil Nadu's state emergency medical service. Free, available 24/7 across all 38 districts.
+              Chennai's free emergency medical service, available 24/7 across the city.
               Call <strong style={{ color: 'white' }}>108</strong> or request online — the nearest ambulance is dispatched within seconds.
             </p>
 
@@ -81,7 +81,7 @@ export default function Landing() {
             {[
               { label: 'Active Emergencies',   value: stats.requests.active,                                    color: 'var(--tn-red)' },
               { label: 'Units Available',       value: stats.ambulances.available + stats.ambulances.assigned,   color: 'var(--green)' },
-              { label: 'Government Hospitals',  value: 18,                                                       color: 'var(--tn-navy)' },
+              { label: 'Government Hospitals',  value: stats.hospitals.total,                                    color: 'var(--tn-navy)' },
               { label: 'Total Dispatches',      value: stats.requests.total,                                     color: 'var(--amber)' },
               { label: 'Completed Today',       value: stats.requests.completed,                                 color: 'var(--blue)' },
             ].map(({ label, value, color }) => (

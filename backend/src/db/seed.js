@@ -1,44 +1,39 @@
 const { getDb } = require('./database');
 
+// Chennai-only service area — every hospital below is a real facility
+// within Chennai city / the immediate metropolitan area.
 const hospitals = [
-  { id:'H01', name:'Government General Hospital',           city:'Chennai',      address:'Park Town, Chennai - 600003',          lat:13.0827, lng:80.2707, phone:'044-25305000', emergency_available:1, icu_beds:50, specialties:'["Trauma","Cardiac","General","ICU"]' },
-  { id:'H02', name:'Rajiv Gandhi Government Hospital',      city:'Chennai',      address:'Park Town, Chennai - 600003',          lat:13.0878, lng:80.2785, phone:'044-25305050', emergency_available:1, icu_beds:40, specialties:'["Multi-Specialty","Emergency","Neurology"]' },
-  { id:'H03', name:'Stanley Medical College Hospital',      city:'Chennai',      address:'Old Jail Road, Chennai - 600001',      lat:13.1090, lng:80.2862, phone:'044-25285010', emergency_available:1, icu_beds:30, specialties:'["General","Trauma","Orthopedics"]' },
-  { id:'H04', name:'Government Kilpauk Medical College',    city:'Chennai',      address:'Kilpauk, Chennai - 600010',            lat:13.0801, lng:80.2367, phone:'044-26422222', emergency_available:1, icu_beds:25, specialties:'["Neurology","Psychiatry","General"]' },
-  { id:'H05', name:'ESI Hospital KK Nagar',                city:'Chennai',      address:'KK Nagar, Chennai - 600078',           lat:13.0451, lng:80.2102, phone:'044-22501051', emergency_available:1, icu_beds:20, specialties:'["General","Orthopedics"]' },
-  { id:'H06', name:'Coimbatore Medical College Hospital',   city:'Coimbatore',   address:'Coimbatore - 641018',                  lat:11.0168, lng:76.9558, phone:'0422-2301393', emergency_available:1, icu_beds:45, specialties:'["Cardiac","General","Trauma","Neurology"]' },
-  { id:'H07', name:'Government Rajaji Hospital',            city:'Madurai',      address:'Panagal Road, Madurai - 625020',       lat:9.9195,  lng:78.1195, phone:'0452-2532535', emergency_available:1, icu_beds:40, specialties:'["Multi-Specialty","Emergency","Cardiac"]' },
-  { id:'H08', name:'Salem Government Hospital',             city:'Salem',        address:'Saradha College Road, Salem - 636016', lat:11.6543, lng:78.1460, phone:'0427-2411151', emergency_available:1, icu_beds:20, specialties:'["General","Orthopedics","Trauma"]' },
-  { id:'H09', name:'Mahatma Gandhi Memorial Hospital',      city:'Trichy',       address:'Puthur, Trichy - 620017',              lat:10.7905, lng:78.7047, phone:'0431-2415050', emergency_available:1, icu_beds:30, specialties:'["General","Cardiac","Nephrology"]' },
-  { id:'H10', name:'Government Hospital Vellore',           city:'Vellore',      address:'Vellore - 632004',                     lat:12.9202, lng:79.1325, phone:'0416-2281730', emergency_available:1, icu_beds:15, specialties:'["General","Neurology","Orthopedics"]' },
-  { id:'H11', name:'Government Hospital Tirunelveli',       city:'Tirunelveli',  address:'Tirunelveli - 627002',                 lat:8.7139,  lng:77.7567, phone:'0462-2572766', emergency_available:1, icu_beds:18, specialties:'["General","Trauma","Pediatrics"]' },
-  { id:'H12', name:'Government Hospital Erode',             city:'Erode',        address:'Erode - 638011',                       lat:11.3410, lng:77.7172, phone:'0424-2255555', emergency_available:1, icu_beds:12, specialties:'["General","Orthopedics"]' },
-  { id:'H13', name:'Government Hospital Thanjavur',         city:'Thanjavur',    address:'Thanjavur - 613004',                   lat:10.7869, lng:79.1378, phone:'04362-228811', emergency_available:1, icu_beds:22, specialties:'["General","Cardiac","Gastroenterology"]' },
-  { id:'H14', name:'Government Hospital Tiruppur',          city:'Tiruppur',     address:'Tiruppur - 641601',                    lat:11.1085, lng:77.3411, phone:'0421-2242222', emergency_available:1, icu_beds:10, specialties:'["General","Trauma"]' },
-  { id:'H15', name:'Government Hospital Dindigul',          city:'Dindigul',     address:'Dindigul - 624001',                    lat:10.3624, lng:77.9695, phone:'0451-2432000', emergency_available:1, icu_beds:8,  specialties:'["General","Pediatrics"]' },
-  { id:'H16', name:'Government Hospital Nagercoil',         city:'Nagercoil',    address:'Nagercoil - 629001',                   lat:8.1833,  lng:77.4119, phone:'04652-225555', emergency_available:1, icu_beds:10, specialties:'["General","Trauma"]' },
-  { id:'H17', name:'Government Hospital Cuddalore',         city:'Cuddalore',    address:'Cuddalore - 607001',                   lat:11.7480, lng:79.7714, phone:'04142-235555', emergency_available:1, icu_beds:12, specialties:'["General"]' },
-  { id:'H18', name:'Government Hospital Kumbakonam',        city:'Kumbakonam',   address:'Kumbakonam - 612001',                  lat:10.9601, lng:79.3845, phone:'0435-2423000', emergency_available:1, icu_beds:8,  specialties:'["General","Cardiac"]' },
+  { id:'H01', name:'Government General Hospital',                 city:'Chennai', address:'Park Town, Chennai - 600003',           lat:13.0827, lng:80.2707, phone:'044-25305000', emergency_available:1, icu_beds:50, specialties:'["Trauma","Cardiac","General","ICU"]' },
+  { id:'H02', name:'Government Royapettah Hospital',               city:'Chennai', address:'Royapettah, Chennai - 600014',          lat:13.0524, lng:80.2634, phone:'044-28480500', emergency_available:1, icu_beds:25, specialties:'["General","Trauma","Orthopedics"]' },
+  { id:'H03', name:'Stanley Medical College Hospital',             city:'Chennai', address:'Old Jail Road, Chennai - 600001',       lat:13.1090, lng:80.2862, phone:'044-25285010', emergency_available:1, icu_beds:30, specialties:'["General","Trauma","Orthopedics"]' },
+  { id:'H04', name:'Government Kilpauk Medical College',           city:'Chennai', address:'Kilpauk, Chennai - 600010',             lat:13.0801, lng:80.2367, phone:'044-26422222', emergency_available:1, icu_beds:25, specialties:'["Neurology","Psychiatry","General"]' },
+  { id:'H05', name:'ESI Hospital KK Nagar',                        city:'Chennai', address:'KK Nagar, Chennai - 600078',            lat:13.0451, lng:80.2102, phone:'044-22501051', emergency_available:1, icu_beds:20, specialties:'["General","Orthopedics"]' },
+  { id:'H06', name:'Government Omandurar Medical College Hospital', city:'Chennai', address:'Omandurar Estate, Chennai - 600002',    lat:13.0693, lng:80.2652, phone:'044-25341556', emergency_available:1, icu_beds:28, specialties:'["Multi-Specialty","Emergency","General"]' },
+  { id:'H07', name:'Institute of Child Health (Egmore)',           city:'Chennai', address:'Halls Road, Egmore, Chennai - 600008',  lat:13.0732, lng:80.2609, phone:'044-28191476', emergency_available:1, icu_beds:15, specialties:'["Pediatrics","General"]' },
+  { id:'H08', name:'Government Hospital, Tambaram Sanatorium',     city:'Chennai', address:'Tambaram, Chennai - 600047',            lat:12.9246, lng:80.1000, phone:'044-22391235', emergency_available:1, icu_beds:12, specialties:'["General","Trauma"]' },
+  { id:'H09', name:'Sri Ramachandra Medical Centre',               city:'Chennai', address:'Porur, Chennai - 600116',               lat:13.0374, lng:80.1575, phone:'044-45928500', emergency_available:1, icu_beds:35, specialties:'["Cardiac","Multi-Specialty","Trauma","Neurology"]' },
+  { id:'H10', name:'Government Peripheral Hospital, Anna Nagar',   city:'Chennai', address:'Anna Nagar, Chennai - 600040',          lat:13.0850, lng:80.2101, phone:'044-26161266', emergency_available:1, icu_beds:14, specialties:'["General","Orthopedics"]' },
 ];
 
 // Each ambulance has a gps_device_id (flashed into Arduino EEPROM)
 // and a sim_number (the SIM card in the SIM800L module)
+// All 15 units are based at Chennai hospitals and positioned within city limits.
 const ambulances = [
   { id:'AMB001', registration_number:'TN01-AB-1234', type:'ALS', status:'available', current_lat:13.0670, current_lng:80.2371, base_hospital_id:'H01', gps_device_id:'ARD-001', sim_number:'9940000001' },
-  { id:'AMB002', registration_number:'TN01-AB-5678', type:'BLS', status:'available', current_lat:13.0950, current_lng:80.2590, base_hospital_id:'H02', gps_device_id:'ARD-002', sim_number:'9940000002' },
+  { id:'AMB002', registration_number:'TN01-AB-5678', type:'BLS', status:'available', current_lat:13.0500, current_lng:80.2650, base_hospital_id:'H02', gps_device_id:'ARD-002', sim_number:'9940000002' },
   { id:'AMB003', registration_number:'TN01-CD-9012', type:'ALS', status:'available', current_lat:13.0540, current_lng:80.2440, base_hospital_id:'H01', gps_device_id:'ARD-003', sim_number:'9940000003' },
   { id:'AMB004', registration_number:'TN01-CD-3456', type:'ICU', status:'available', current_lat:13.1200, current_lng:80.2680, base_hospital_id:'H03', gps_device_id:'ARD-004', sim_number:'9940000004' },
   { id:'AMB005', registration_number:'TN01-EF-7890', type:'BLS', status:'available', current_lat:13.0310, current_lng:80.2200, base_hospital_id:'H05', gps_device_id:'ARD-005', sim_number:'9940000005' },
-  { id:'AMB006', registration_number:'TN38-AA-0011', type:'ALS', status:'available', current_lat:11.0250, current_lng:76.9640, base_hospital_id:'H06', gps_device_id:'ARD-006', sim_number:'9940000006' },
-  { id:'AMB007', registration_number:'TN38-AA-0022', type:'BLS', status:'available', current_lat:11.0050, current_lng:76.9400, base_hospital_id:'H06', gps_device_id:'ARD-007', sim_number:'9940000007' },
-  { id:'AMB008', registration_number:'TN59-BB-1111', type:'ALS', status:'available', current_lat:9.9100,  current_lng:78.1300, base_hospital_id:'H07', gps_device_id:'ARD-008', sim_number:'9940000008' },
-  { id:'AMB009', registration_number:'TN30-CC-2222', type:'BLS', status:'available', current_lat:11.6600, current_lng:78.1500, base_hospital_id:'H08', gps_device_id:'ARD-009', sim_number:'9940000009' },
-  { id:'AMB010', registration_number:'TN45-DD-3333', type:'ALS', status:'available', current_lat:10.7850, current_lng:78.7100, base_hospital_id:'H09', gps_device_id:'ARD-010', sim_number:'9940000010' },
-  { id:'AMB011', registration_number:'TN23-EE-4444', type:'BLS', status:'available', current_lat:12.9250, current_lng:79.1400, base_hospital_id:'H10', gps_device_id:'ARD-011', sim_number:'9940000011' },
-  { id:'AMB012', registration_number:'TN76-FF-5555', type:'ALS', status:'available', current_lat:8.7200,  current_lng:77.7600, base_hospital_id:'H11', gps_device_id:'ARD-012', sim_number:'9940000012' },
-  { id:'AMB013', registration_number:'TN26-GG-6666', type:'ICU', status:'available', current_lat:13.0700, current_lng:80.2600, base_hospital_id:'H02', gps_device_id:'ARD-013', sim_number:'9940000013' },
-  { id:'AMB014', registration_number:'TN33-HH-7777', type:'BLS', status:'available', current_lat:10.9650, current_lng:79.3900, base_hospital_id:'H18', gps_device_id:'ARD-014', sim_number:'9940000014' },
-  { id:'AMB015', registration_number:'TN19-II-8888', type:'ALS', status:'maintenance',current_lat:11.1100, current_lng:77.3450, base_hospital_id:'H14', gps_device_id:'ARD-015', sim_number:'9940000015' },
+  { id:'AMB006', registration_number:'TN02-AA-0011', type:'ALS', status:'available', current_lat:13.0650, current_lng:80.2600, base_hospital_id:'H06', gps_device_id:'ARD-006', sim_number:'9940000006' },
+  { id:'AMB007', registration_number:'TN02-AA-0022', type:'BLS', status:'available', current_lat:13.0720, current_lng:80.2680, base_hospital_id:'H06', gps_device_id:'ARD-007', sim_number:'9940000007' },
+  { id:'AMB008', registration_number:'TN04-BB-1111', type:'ALS', status:'available', current_lat:13.0700, current_lng:80.2580, base_hospital_id:'H07', gps_device_id:'ARD-008', sim_number:'9940000008' },
+  { id:'AMB009', registration_number:'TN07-CC-2222', type:'BLS', status:'available', current_lat:12.9280, current_lng:80.1050, base_hospital_id:'H08', gps_device_id:'ARD-009', sim_number:'9940000009' },
+  { id:'AMB010', registration_number:'TN09-DD-3333', type:'ALS', status:'available', current_lat:13.0400, current_lng:80.1600, base_hospital_id:'H09', gps_device_id:'ARD-010', sim_number:'9940000010' },
+  { id:'AMB011', registration_number:'TN10-EE-4444', type:'BLS', status:'available', current_lat:13.0880, current_lng:80.2130, base_hospital_id:'H10', gps_device_id:'ARD-011', sim_number:'9940000011' },
+  { id:'AMB012', registration_number:'TN11-FF-5555', type:'ALS', status:'available', current_lat:13.0550, current_lng:80.2660, base_hospital_id:'H02', gps_device_id:'ARD-012', sim_number:'9940000012' },
+  { id:'AMB013', registration_number:'TN01-GG-6666', type:'ICU', status:'available', current_lat:13.0700, current_lng:80.2600, base_hospital_id:'H01', gps_device_id:'ARD-013', sim_number:'9940000013' },
+  { id:'AMB014', registration_number:'TN12-HH-7777', type:'BLS', status:'available', current_lat:13.0820, current_lng:80.2070, base_hospital_id:'H10', gps_device_id:'ARD-014', sim_number:'9940000014' },
+  { id:'AMB015', registration_number:'TN18-II-8888', type:'ALS', status:'maintenance',current_lat:12.9200, current_lng:80.0980, base_hospital_id:'H08', gps_device_id:'ARD-015', sim_number:'9940000015' },
 ];
 
 const drivers = [

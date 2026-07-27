@@ -23,6 +23,14 @@ export const fetchRequest = async (id) => {
   return res.json();
 };
 
+// ── Public (unauthenticated) summary stats — used on the landing page ─────
+
+export const fetchPublicStats = async () => {
+  const res = await fetch(`${API_URL}/stats`);
+  if (!res.ok) throw new Error('Failed to load stats');
+  return res.json();
+};
+
 // ── Admin ─────────────────────────────────────────────────────────────────
 
 export const adminLogin = async (username, password) => {

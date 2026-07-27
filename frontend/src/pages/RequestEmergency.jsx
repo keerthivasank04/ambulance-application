@@ -36,6 +36,13 @@ function MapClickPicker({ onPick }) {
   return null;
 }
 
+// Mirrors the backend's CHENNAI_BOUNDS check (requests.js) so an out-of-area
+// pick is caught immediately instead of only failing at final submission.
+const CHENNAI_BOUNDS = { minLat: 12.75, maxLat: 13.30, minLng: 79.95, maxLng: 80.35 };
+const isWithinChennai = (lat, lng) =>
+  lat >= CHENNAI_BOUNDS.minLat && lat <= CHENNAI_BOUNDS.maxLat &&
+  lng >= CHENNAI_BOUNDS.minLng && lng <= CHENNAI_BOUNDS.maxLng;
+
 export default function RequestEmergency() {
   const navigate = useNavigate();
   const [loading, setLoading]       = useState(false);
@@ -68,9 +75,10 @@ export default function RequestEmergency() {
     setGeoError('');
     navigator.geolocation.getCurrentPosition(
       pos => {
-        setCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+        const { latitude: lat, longitude: lng } = pos.coords;
+        setCoords({ lat, lng });
         setGeoLoading(false);
-        if (step === 1) setStep(2);
+        if (step === 1 && isWithinChennai(lat, lng)) setStep(2);
       },
       () => {
         setGeoError('Location access denied. Please enable location permissions in browser settings and try again.');
@@ -86,7 +94,8 @@ export default function RequestEmergency() {
     setSearchTried(true);
     setSearchResults([]);
     try {
-      const url = `https://nominatim.openstreetmap.org/search?format=json&limit=5&countrycodes=in&q=${encodeURIComponent(searchQuery)}`;
+      // Bias results to Chennai (service area) without hard-excluding everything else
+      const url = `https://nominatim.openstreetmap.org/search?format=json&limit=5&countrycodes=in&viewbox=79.95,13.30,80.35,12.75&bounded=0&q=${encodeURIComponent(searchQuery)}`;
       const res = await fetch(url);
       const data = await res.json();
       setSearchResults(Array.isArray(data) ? data : []);
@@ -106,6 +115,7 @@ export default function RequestEmergency() {
     e.preventDefault();
     if (loading) return;
     if (!coords) return setError('Please set a location before submitting.');
+    if (!isWithinChennai(coords.lat, coords.lng)) return setError('This service currently operates only within Chennai. Please choose a location inside the city.');
     setLoading(true);
     setError('');
     const fd = new FormData(e.target);
@@ -183,7 +193,16 @@ export default function RequestEmergency() {
                 Use your current GPS location, search for an address, or drop a pin on the map — whichever is fastest.
               </p>
 
-              {coords ? (
+              {coords && !isWithinChennai(coords.lat, coords.lng) ? (
+                <div className="location-status pending has-error">
+                  <div style={{ color: '#991B1B', fontSize: '0.875rem', marginBottom: '0.875rem' }}>
+                    This location is outside Chennai. This service currently operates only within Chennai city and its immediate suburbs — please call <strong>108</strong> directly if you're elsewhere.
+                  </div>
+                  <button type="button" onClick={() => setCoords(null)} className="btn btn-primary btn-full">
+                    Choose a Different Location
+                  </button>
+                </div>
+              ) : coords ? (
                 <div className="location-status detected">
                   <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--green-dark)" strokeWidth="2.5" strokeLinecap="round" style={{ flexShrink: 0 }}><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
                   <div>
@@ -274,7 +293,7 @@ export default function RequestEmergency() {
                 </>
               )}
 
-              {coords && (
+              {coords && isWithinChennai(coords.lat, coords.lng) && (
                 <button type="button" onClick={() => setStep(2)} data-testid="step1-continue" className="btn btn-danger btn-full btn-lg" style={{ marginTop: '1.25rem' }}>
                   Continue →
                 </button>

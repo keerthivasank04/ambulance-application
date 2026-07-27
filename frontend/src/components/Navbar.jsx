@@ -66,7 +66,7 @@ export default function Navbar() {
       <div className="govt-banner">
         <span>Government of Tamil Nadu &nbsp;|&nbsp; National Health Mission &nbsp;|&nbsp; <strong>108 Emergency Services</strong></span>
         <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem' }}>
-          <span style={{ opacity: 0.6 }}>Free · 24/7 · All 38 Districts</span>
+          <span style={{ opacity: 0.6 }}>Free · 24/7 · Chennai City</span>
           <a href="tel:108" style={{ fontWeight: 700, fontSize: '0.82rem', color: '#FCD34D', letterSpacing: '0.04em' }}>
             Call 108
           </a>

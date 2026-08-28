@@ -1,0 +1,25 @@
+{
+  "name": "ambulance-app-main",
+  "version": "1.0.0",
+  "description": "A full-stack Emergency Ambulance Assistance application designed for rapid dispatch and real-time tracking in Chennai.",
+  "main": "index.js",
+  "scripts": {
+    "backend": "npm --prefix backend run dev",
+    "frontend": "npm --prefix frontend run dev",
+    "bridge": "npm --prefix backend run bridge",
+    "bridge:sim": "npm --prefix backend run bridge:sim",
+    "bridge:all": "npm --prefix backend run bridge:all",
+    "start": "node backend/index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/keerthivasank04/ambulance-application.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/keerthivasank04/ambulance-application/issues"
+  },
+  "homepage": "https://github.com/keerthivasank04/ambulance-application#readme"
+}

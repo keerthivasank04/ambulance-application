@@ -79,18 +79,36 @@ function parseRMC(parts) {
   };
 }
 
+let sentenceCount = 0;
+let lastHeartbeat = 0;
+
+const DEBUG = args['debug'] !== undefined || args['verbose'] !== undefined;
+
 function processSentence(line) {
   line = line.trim();
   if (!line.startsWith('$')) return;
+  sentenceCount++;
+  if (DEBUG) console.log('  [raw-nmea]', line);
   if (!validateChecksum(line)) { console.warn('  [warn] checksum fail:', line); return; }
   const parts = line.split('*')[0].split(',');
   const type  = parts[0];
   if (type === '$GPGGA' || type === '$GNGGA') {
     const p = parseGGA(parts);
-    if (p.lat && p.lng) latestGGA = p;
+    latestGGA = p;
   } else if (type === '$GPRMC' || type === '$GNRMC') {
     const p = parseRMC(parts);
-    if (p.valid && p.lat) latestRMC = p;
+    latestRMC = p;
+  }
+
+  // Periodic heartbeat every 3 seconds if waiting for fix
+  const now = Date.now();
+  if (now - lastHeartbeat > 3000) {
+    lastHeartbeat = now;
+    const hasFix = (latestGGA.lat && latestGGA.lng) || (latestRMC.lat && latestRMC.lng);
+    if (!hasFix) {
+      const sats = latestGGA.satellites || 0;
+      process.stdout.write(`\r  [gps-status] Receiving NMEA data... Satellites locked: ${sats} (Searching for fix, point antenna towards open sky)   `);
+    }
   }
 }
 
@@ -229,12 +247,21 @@ function runSerial() {
 
   parser.on('data', processSentence);
 
+  let checkCount = 0;
   setInterval(() => {
+    checkCount++;
+    if (checkCount === 3 && sentenceCount === 0) {
+      console.log('\n  [tip] No GPS NMEA characters received yet.');
+      console.log('        1. Ensure Arduino is running the latest sketch.');
+      console.log('        2. If Green & Blue wires are reversed, swap Pin 2 and Pin 3 in the sketch.');
+      console.log('        3. Check that NEO-6M power LED is lit.\n');
+    }
+
     const lat = latestGGA.lat || latestRMC.lat;
     const lng = latestGGA.lng || latestRMC.lng;
     if (!lat || !lng) return;
 
-    console.log(`  [gps] ${DEVICE_ID}  ${lat.toFixed(5)}, ${lng.toFixed(5)}  ${latestRMC.speed_kmh || 0} km/h  sat:${latestGGA.satellites || 0}`);
+    console.log(`\n  [gps] ${DEVICE_ID}  ${lat.toFixed(5)}, ${lng.toFixed(5)}  ${latestRMC.speed_kmh || 0} km/h  sat:${latestGGA.satellites || 0}`);
 
     postGPS({
       device_id  : DEVICE_ID,

@@ -103,7 +103,7 @@ npm run dev
 3. In a new terminal, launch the live USB GPS Bridge:
 ```powershell
 cd g:\Zips\ambulance-app-main\backend
-node gps-bridge.js --port COM5 --device ARD-001
+node gps-bridge.js --port COM5 --device ARD-001 --server https://tn-ambulance-backend.onrender.com
 ```
 
 ---

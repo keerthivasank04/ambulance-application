@@ -41,8 +41,8 @@
 const char DEVICE_ID[]   = "ARD-001";                // Matches Ambulance 1 in Database
 const char API_KEY[]     = "arduino-bridge-secret";  // Matches GPS_API_KEY in backend/.env
 const char APN[]         = "bsnlnet";                // BSNL APN ("bsnlnet" or "www")
-const char SERVER_HOST[]  = "your-server-domain.com"; // Control Server Host/Ngrok (no http://)
-const int  SERVER_PORT   = 5000;                     // Server Port
+const char SERVER_HOST[]  = "tn-ambulance-backend.onrender.com"; // Render Cloud Backend Host
+const int  SERVER_PORT   = 443;                             // HTTPS Port on Render
 
 // Pin Mapping
 const int GPS_RX_PIN = 2;
@@ -145,8 +145,13 @@ void transmitGprsHTTP(float lat, float lng, float speedKmh, float headingDeg, in
                     String(F(",\"fix_quality\":1,\"source\":\"arduino\"}"));
 
   sendAT(F("AT+HTTPINIT"), "OK", 2000);
+  if (SERVER_PORT == 443) {
+    sendAT(F("AT+HTTPSSL=1"), "OK", 1000); // Enable SSL for HTTPS on Render
+    sendATStr(String(F("AT+HTTPPARA=\"URL\",\"https://")) + SERVER_HOST + String(F("/api/gps-update\"")), "OK", 2000);
+  } else {
+    sendATStr(String(F("AT+HTTPPARA=\"URL\",\"http://")) + SERVER_HOST + String(F(":")) + String(SERVER_PORT) + String(F("/api/gps-update\"")), "OK", 2000);
+  }
   sendAT(F("AT+HTTPPARA=\"CID\",1"), "OK", 1000);
-  sendATStr(String(F("AT+HTTPPARA=\"URL\",\"http://")) + SERVER_HOST + String(F(":")) + String(SERVER_PORT) + String(F("/api/gps-update\"")), "OK", 2000);
   sendAT(F("AT+HTTPPARA=\"CONTENT\",\"application/json\""), "OK", 1000);
   sendATStr(String(F("AT+HTTPPARA=\"USERDATA\",\"x-api-key: ")) + API_KEY + String(F("\"")), "OK", 1000);
   sendATStr(String(F("AT+HTTPDATA=")) + String(jsonBody.length()) + String(F(",10000")), "DOWNLOAD", 3000);

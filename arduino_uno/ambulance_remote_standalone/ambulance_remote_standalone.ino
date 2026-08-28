@@ -35,8 +35,8 @@
 
 // ── Configuration ──────────────────────────────────────────────────────────
 const char APN[]         = "bsnlnet";                   // BSNL GPRS APN ("bsnlnet" or "www")
-const char SERVER_HOST[] = "your-app-domain.com";       // Your public server host/domain or ngrok host (no http://)
-const int  SERVER_PORT   = 5000;                        // Server port (or 80 / 443)
+const char SERVER_HOST[] = "tn-ambulance-backend.onrender.com"; // Render Cloud Backend Host
+const int  SERVER_PORT   = 443;                             // HTTPS Port on Render
 const char API_KEY[]     = "arduino-bridge-secret";     // Matches GPS_API_KEY in backend/.env
 const char DEVICE_ID[]   = "ARD-001";                   // Matches Ambulance 1 in database
 

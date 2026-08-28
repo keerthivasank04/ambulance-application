@@ -1,13 +1,13 @@
-# 🚑 TN 108 Emergency Ambulance Assistance & Automated Dispatch System
+#  TN 108 Emergency Ambulance Assistance & Automated Dispatch System
 ### Comprehensive Project Submission & Demonstration Manual
 
 ---
 
-## 📌 1. Project Overview
+##  1. Project Overview
 
 The **TN 108 Emergency Ambulance Assistance System** is a full-stack IoT and dispatch platform designed for rapid medical response. It connects real-world IoT telemetry hardware inside ambulances to a real-time web portal, automatically calculating the closest emergency units using the **Haversine Algorithm** and activating intelligent **Green Traffic Corridors**.
 
-### 🌟 Key Highlights:
+###  Key Highlights:
 - **Dual-Mode Telemetry Hardware**: Works over **USB Serial Bridge** (for lab evaluation/demos) and standalone **2G Cellular GPRS** (for real-world ambulance road tracking).
 - **Sub-Second Dispatch Engine**: Computes distance, ambulance readiness (ALS / BLS / ICU), and assigns the optimal unit instantly.
 - **Dynamic Green Corridor**: Automated traffic signal prioritization along the ambulance's route to the hospital.
@@ -15,7 +15,7 @@ The **TN 108 Emergency Ambulance Assistance System** is a full-stack IoT and dis
 
 ---
 
-## 🛠️ 2. Hardware Architecture & Pinout
+##  2. Hardware Architecture & Pinout
 
 ### Component Bill of Materials (BOM):
 | Component | Function | Model / Spec |
@@ -25,7 +25,7 @@ The **TN 108 Emergency Ambulance Assistance System** is a full-stack IoT and dis
 | **Cellular Modem** | 2G GPRS Autonomous Cloud Uplink | SIM800L Module (with BSNL SIM) |
 | **Power Converter** | 4.0V High-Current Supply (2A Peak) | LM2596 DC-DC Step-Down Buck |
 
-### 🔌 Complete Pin-to-Pin Wiring:
+###  Complete Pin-to-Pin Wiring:
 
 ```
                   ┌──────────────────────────────────────────────┐
@@ -47,7 +47,7 @@ The **TN 108 Emergency Ambulance Assistance System** is a full-stack IoT and dis
 
 ---
 
-## 💻 3. Software Architecture & Tech Stack
+##  3. Software Architecture & Tech Stack
 
 ```
    ┌─────────────────────────────────────────────────────────────┐
@@ -74,7 +74,7 @@ The **TN 108 Emergency Ambulance Assistance System** is a full-stack IoT and dis
 
 ---
 
-## 🚀 4. How to Run the Project for Evaluation / Viva
+##  4. How to Run the Project for Evaluation / Viva
 
 ### Option A: 1-Click Startup (Recommended)
 Simply **double-click** [`start-dev.bat`](file:///g:/Zips/ambulance-app-main/start-dev.bat) in the project root folder. It opens:
@@ -108,7 +108,7 @@ node gps-bridge.js --port COM5 --device ARD-001 --server https://tn-ambulance-ba
 
 ---
 
-## 🔑 5. Access Credentials & Portals
+##  5. Access Credentials & Portals
 
 | Portal | URL | Credentials |
 |---|---|---|
@@ -119,7 +119,7 @@ node gps-bridge.js --port COM5 --device ARD-001 --server https://tn-ambulance-ba
 
 ---
 
-## 📡 6. Telemetry Data Structure
+##  6. Telemetry Data Structure
 
 Every 1–2 seconds, the hardware unit streams the following JSON payload to `POST /api/gps-update`:
 
@@ -138,7 +138,7 @@ Every 1–2 seconds, the hardware unit streams the following JSON payload to `PO
 
 ---
 
-## 📁 7. Final Project Deliverables Structure
+##  7. Final Project Deliverables Structure
 
 ```
 ambulance-app-main/

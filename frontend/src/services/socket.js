@@ -2,7 +2,7 @@ import { io } from 'socket.io-client';
 
 // VITE_API_URL may be 'http://host:5000/api' — socket needs the server root only
 function getServerRoot() {
-  const raw = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+  const raw = import.meta.env.VITE_API_URL || 'https://tn-ambulance-backend.onrender.com/api';
   // Strip trailing /api or /api/ so socket.io connects to the server root
   return raw.replace(/\/api\/?$/, '');
 }

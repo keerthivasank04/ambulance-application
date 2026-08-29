@@ -93,7 +93,17 @@ export default function AdminDashboard() {
     sock.on('ambulance:location', (p) => {
       setAmb(prev => (prev || []).map(a =>
         a.id === p.ambulance_id
-          ? { ...a, current_lat: p.lat, current_lng: p.lng, current_speed_kmh: p.speed_kmh, last_location_update: p.timestamp }
+          ? {
+              ...a,
+              current_lat: p.lat,
+              current_lng: p.lng,
+              current_speed_kmh: p.speed_kmh,
+              current_heading: p.heading,
+              gps_source: p.source || a.gps_source,
+              gps_satellites: p.satellites !== undefined ? p.satellites : a.gps_satellites,
+              gps_fix_quality: p.fix_quality !== undefined ? p.fix_quality : a.gps_fix_quality,
+              last_location_update: p.timestamp
+            }
           : a
       ));
     });

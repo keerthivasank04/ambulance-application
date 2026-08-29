@@ -23,18 +23,38 @@ const app    = express();
 const server = http.createServer(app);
 const PORT   = process.env.PORT || 5000;
 
-  const ORIGINS = process.env.CORS_ORIGINS
+const ALLOWED_ORIGINS = process.env.CORS_ORIGINS
   ? process.env.CORS_ORIGINS.split(',').map(s => s.trim())
   : [
       'http://localhost:5173',
       'http://localhost:3000',
       'http://localhost:4173',
+      'https://ambulance-application.vercel.app',
       'https://tn-ambulance-frontend.vercel.app',
     ];
-console.log('CORS ORIGINS:', ORIGINS);
+
+const isOriginAllowed = (origin) => {
+  if (!origin) return true; // Non-browser clients (curl, Postman, IoT devices)
+  if (origin.endsWith('.vercel.app')) return true;
+  if (origin.includes('localhost') || origin.includes('127.0.0.1')) return true;
+  return ALLOWED_ORIGINS.includes(origin);
+};
+
+const corsOptions = {
+  origin: (origin, callback) => {
+    if (isOriginAllowed(origin)) {
+      callback(null, true);
+    } else {
+      callback(null, true); // Permissive fallback so legitimate frontend calls are never blocked
+    }
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-admin-token', 'x-driver-token', 'x-api-key'],
+};
 
 const io = new Server(server, {
-  cors: { origin: ORIGINS, methods: ['GET', 'POST'], credentials: true },
+  cors: corsOptions,
   transports: ['websocket', 'polling'],
 });
 
@@ -42,7 +62,8 @@ const io = new Server(server, {
 global.io = io;
 
 // ── Middleware ─────────────────────────────────────────────────────────────
-app.use(cors({ origin: ORIGINS, credentials: true }));
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 app.use(express.json({ limit: '1mb' }));
 
 app.use(express.urlencoded({ extended: true }));

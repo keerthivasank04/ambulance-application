@@ -13,4 +13,4 @@ services:
       - key: GPS_API_KEY
         value: arduino-bridge-secret
       - key: CORS_ORIGINS
-        value: https://tn-ambulance-frontend.vercel.app
+        value: https://ambulance-application.vercel.app,https://tn-ambulance-frontend.vercel.app

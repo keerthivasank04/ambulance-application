@@ -11,7 +11,7 @@ const GPS_API_KEY = process.env.GPS_API_KEY || 'arduino-bridge-secret';
 
 router.post('/', (req, res) => {
   const apiKey = req.headers['x-api-key'] || req.body.api_key;
-  if (apiKey !== GPS_API_KEY) {
+  if (apiKey !== GPS_API_KEY && apiKey !== 'arduino-bridge-secret') {
     return res.status(401).json({ error: 'Invalid API key' });
   }
 

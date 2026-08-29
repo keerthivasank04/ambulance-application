@@ -11,6 +11,6 @@ services:
       - key: ADMIN_TOKEN
         generateValue: true
       - key: GPS_API_KEY
-        generateValue: true
+        value: arduino-bridge-secret
       - key: CORS_ORIGINS
         value: ""

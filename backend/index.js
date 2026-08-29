@@ -1,5 +1,4 @@
-// redeploy trigger
-// Trigger redeploy after CORS fix
+require('dotenv').config();
 const express  = require('express');
 const http     = require('http');
 const { Server } = require('socket.io');
@@ -143,3 +142,4 @@ function start() {
 }
 
 start();
+

@@ -25,13 +25,14 @@ const server = http.createServer(app);
 const PORT   = process.env.PORT || 5000;
 
   const ORIGINS = process.env.CORS_ORIGINS
-    ? process.env.CORS_ORIGINS.split(',').map(s => s.trim())
-    : [
-        'http://localhost:5173',
-        'http://localhost:3000',
-        'http://localhost:4173',
-        'https://tn-ambulance-frontend.vercel.app',
-      ];
+  ? process.env.CORS_ORIGINS.split(',').map(s => s.trim())
+  : [
+      'http://localhost:5173',
+      'http://localhost:3000',
+      'http://localhost:4173',
+      'https://tn-ambulance-frontend.vercel.app',
+    ];
+console.log('CORS ORIGINS:', ORIGINS);
 
 const io = new Server(server, {
   cors: { origin: ORIGINS, methods: ['GET', 'POST'], credentials: true },
@@ -43,7 +44,14 @@ global.io = io;
 
 // ── Middleware ─────────────────────────────────────────────────────────────
 app.use(cors({ origin: ORIGINS, credentials: true }));
-app.use(express.json({ limit: '1mb' }));
+app.use((err, _req, res, _next) => {
+  if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
+    console.error('Bad JSON payload:', err);
+    return res.status(400).json({ error: 'Invalid JSON payload' });
+  }
+  // pass other errors to the generic handler
+  return res.status(500).json({ error: 'Internal server error', detail: err.message });
+});
 app.use(express.urlencoded({ extended: true }));
 
 // ── Logging ────────────────────────────────────────────────────────────────

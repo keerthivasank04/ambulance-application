@@ -9,7 +9,11 @@ const ADMIN_TOKEN = process.env.ADMIN_TOKEN   || 'tnadmin-secret-token';
 
 // POST /api/admin/login
 router.post('/login', (req, res) => {
-  const { username, password } = req.body;
+  const { username, password } = req.body || {};
+  console.log('Admin login attempt:', req.body);
+  if (!username || !password) {
+    return res.status(400).json({ error: 'Missing username or password' });
+  }
   if (username === ADMIN_USER && password === ADMIN_PASS) {
     return res.json({ success: true, token: ADMIN_TOKEN });
   }

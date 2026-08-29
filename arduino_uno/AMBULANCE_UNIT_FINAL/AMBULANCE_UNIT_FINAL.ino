@@ -86,26 +86,13 @@ bool initGPRS() {
     delay(200);
   }
 
+  // Gentle initialization (no power cycling to prevent brownouts)
   sendGSM("ATE0", "OK", 1500);        // Echo off
-  sendGSM("AT+CFUN=0", "OK", 3000);   // Minimum mode first
-  delay(1000);
-  sendGSM("AT+CFUN=1", "OK", 5000);   // Full mode (forces SIM re-init)
-  delay(3000);                         // Wait for SIM card to wake up
+  delay(2000);
 
-  // Retry AT+CPIN? until READY (up to 15 seconds)
-  bool simReady = false;
-  for (int i = 0; i < 10; i++) {
-    Serial.print(F("[SIM] CPIN check ")); Serial.println(i + 1);
-    if (sendGSM("AT+CPIN?", "READY", 2000)) {
-      simReady = true;
-      Serial.println(F("[SIM] SIM Card is READY!"));
-      break;
-    }
-    delay(1500);
-  }
-  if (!simReady) {
-    Serial.println(F("[SIM] WARNING: SIM not responding. Check SIM insertion."));
-  }
+  // Check if SIM ready
+  sendGSM("AT+CPIN?", "READY", 3000);
+  delay(1000);
 
   // Wait for signal strength > 0 (up to 30 seconds)
   Serial.println(F("[GSM] Waiting for BSNL signal..."));

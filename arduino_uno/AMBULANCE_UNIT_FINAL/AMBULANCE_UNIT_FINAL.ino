@@ -224,15 +224,53 @@ void setup() {
   Serial.println(F("SIM800L: Pins 4 & 5 | GPS: Pins 8 & 9"));
   Serial.println(F("=========================================="));
 
-  // SIM800L Serial (Pins 4 & 5)
-  gsmSerial.begin(9600);
-
   // NEO-6M GPS Serial (Pins 8 & 9)
   gpsSerial.begin(9600);
 
-  delay(3000); // Stabilization
+  // Auto-detect SIM800L baud rate on Pins 4 & 5
+  long bauds[] = {9600, 19200, 38400, 57600, 115200, 4800};
+  bool found = false;
+  for (int b = 0; b < 6 && !found; b++) {
+    gsmSerial.begin(bauds[b]);
+    gsmSerial.listen();
+    delay(100);
+    // Flush
+    while (gsmSerial.available()) gsmSerial.read();
+    // Try AT
+    gsmSerial.println("AT");
+    delay(600);
+    String resp = "";
+    while (gsmSerial.available()) resp += (char)gsmSerial.read();
+    Serial.print(F("[BAUD PROBE] ")); Serial.print(bauds[b]);
+    Serial.print(F(" -> \"")); Serial.print(resp); Serial.println(F("\""));
+    if (resp.indexOf("OK") != -1 || resp.indexOf("AT") != -1) {
+      Serial.print(F("[BAUD] SIM800L found at ")); Serial.println(bauds[b]);
+      // If not 9600, fix to 9600
+      if (bauds[b] != 9600) {
+        gsmSerial.println("AT+IPR=9600");
+        delay(500);
+        gsmSerial.begin(9600);
+        delay(300);
+        Serial.println(F("[BAUD] Reset SIM800L to 9600 baud."));
+      }
+      found = true;
+    }
+  }
+
+  if (!found) {
+    Serial.println(F("[BAUD] WARNING: SIM800L not responding. Check wiring:"));
+    Serial.println(F("  SIM800L TX --> Arduino Pin 4"));
+    Serial.println(F("  SIM800L RX --> Arduino Pin 5"));
+    Serial.println(F("  SIM800L VCC --> Buck converter (3.9-4.2V)"));
+    Serial.println(F("  ALL GND pins connected together"));
+    Serial.println(F("Retrying in 5 seconds..."));
+    delay(5000);
+  }
+
+  delay(1000); // Stabilization
   initGPRS();
 }
+
 
 void loop() {
   // 1. Read real GPS data from NEO-6M on Pins 8 & 9

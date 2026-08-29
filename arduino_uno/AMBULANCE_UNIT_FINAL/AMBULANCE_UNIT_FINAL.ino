@@ -1,306 +1,174 @@
 /**
  * ============================================================================
- * PROJECT: TN 108 Emergency Ambulance Assistance & Live Dispatch System
- * MODULE : Master Telemetry Firmware with Universal Auto-Pin Modem Detector
- * HOST   : https://tn-ambulance-backend.onrender.com
+ * TN 108 AMBULANCE — FINAL PRODUCTION FIRMWARE  (v2 — SoftwareSerial SIM)
+ *
+ * WIRING:
+ *   SIM800L TX  →  Arduino Pin 4  (gsmSerial RX)
+ *   SIM800L RX  →  Arduino Pin 5  (gsmSerial TX)
+ *   NEO-6M  TX  →  Arduino Pin 8  (gpsSerial RX)
+ *   NEO-6M  RX  →  Arduino Pin 9  (gpsSerial TX)
+ *
+ *   Pins 0 & 1 are LEFT FREE — USB upload works without unplugging anything.
+ *
+ * UPLOAD INSTRUCTIONS (no unplugging needed):
+ *   1. Open this sketch in Arduino IDE
+ *   2. Click Upload — done.
+ *
+ * Server : https://tn-ambulance-backend.onrender.com
  * ============================================================================
  */
 
 #include <SoftwareSerial.h>
 #include <TinyGPS++.h>
 
-// ── Master Cloud Configuration ─────────────────────────────────────────────
-const char DEVICE_ID[]   = "ARD-001";                           // Ambulance 1 ID
-const char API_KEY[]     = "arduino-bridge-secret";             // Universal API Key
-const char APN[]         = "bsnlnet";                           // BSNL 2G APN ("bsnlnet" or "www")
-const char SERVER_HOST[] = "tn-ambulance-backend.onrender.com"; // Render Backend Domain
-const int  SERVER_PORT   = 443;                                 // HTTPS Port 443
+// Configuration
+const char DEVICE_ID[]   = "ARD-001";
+const char API_KEY[]     = "arduino-bridge-secret";
+const char SERVER_HOST[] = "tn-ambulance-backend.onrender.com";
 
-// GPS on Pins 2 & 3
-SoftwareSerial gpsSerial(2, 3);
-SoftwareSerial* gsmSerial = nullptr;
+// SIM800L on SoftwareSerial Pins 4 (RX) & 5 (TX)
+SoftwareSerial gsmSerial(4, 5);
+
+// GPS on SoftwareSerial Pins 8 (RX) & 9 (TX)
+SoftwareSerial gpsSerial(8, 9);
 TinyGPSPlus gps;
 
-int gsmRx = -1;
-int gsmTx = -1;
-long gsmBaud = 9600;
-bool gprsReady = false;
 unsigned long lastPostTime = 0;
-float lastValidLat = 13.0827; // Default Chennai Coords
-float lastValidLng = 80.2707;
+bool gprsReady = false;
+float lastLat = 13.0827;
+float lastLng = 80.2707;
 
-// Candidate Pin Pairs for SIM800L
-const int candidatePairs[][2] = {
-  {7, 8},   // D7, D8
-  {8, 7},   // D8, D7
-  {4, 5},   // D4, D5
-  {5, 4},   // D5, D4
-  {10, 11}, // D10, D11
-  {11, 10}, // D11, D10
-  {9, 10},  // D9, D10
-  {6, 7},   // D6, D7
-  {A0, A1}, // A0, A1
-  {A1, A0}, // A1, A0
-  {A2, A3}, // A2, A3
-  {A4, A5}  // A4, A5
-};
-const int numPairs = sizeof(candidatePairs) / sizeof(candidatePairs[0]);
-const long testBauds[] = {9600, 115200, 19200, 4800};
-const int numBauds = sizeof(testBauds) / sizeof(testBauds[0]);
-
-// ── Send AT command helper ─────────────────────────────────────────────────
-String sendGsm(const String& cmd, unsigned long timeoutMs = 3000) {
-  if (!gsmSerial) return "";
-  gsmSerial->println(cmd);
+// Send AT command via SoftwareSerial (Pins 4 & 5 = SIM800L)
+String sendAT(const String& cmd, unsigned long timeoutMs = 3000) {
+  gsmSerial.listen();
+  gsmSerial.println(cmd);
   unsigned long start = millis();
   String resp = "";
   while (millis() - start < timeoutMs) {
-    while (gsmSerial->available()) {
-      char c = gsmSerial->read();
-      resp += c;
+    while (gsmSerial.available()) {
+      resp += (char)gsmSerial.read();
     }
+    if (resp.indexOf("OK") != -1 || resp.indexOf("ERROR") != -1) break;
   }
+  Serial.print("[AT] "); Serial.print(cmd); Serial.print(" => "); Serial.println(resp);
   return resp;
 }
 
-// ── Universal Auto-Detect for SIM800L Modem Pins & Baud ────────────────────
-bool autoDetectModem() {
-  Serial.println(F("[SCAN] Auto-probing Arduino pins for SIM800L modem..."));
+void initGPRS() {
+  String r;
 
-  for (int p = 0; p < numPairs; p++) {
-    int rx = candidatePairs[p][0];
-    int tx = candidatePairs[p][1];
-
-    for (int b = 0; b < numBauds; b++) {
-      long baud = testBauds[b];
-
-      SoftwareSerial testSerial(rx, tx);
-      testSerial.begin(baud);
-      testSerial.listen();
-
-      // Send AT sync burst
-      testSerial.print("AT\r\n");
-      delay(80);
-      testSerial.print("AT\r\n");
-      delay(80);
-
-      unsigned long start = millis();
-      String resp = "";
-      while (millis() - start < 300) {
-        while (testSerial.available()) {
-          char c = testSerial.read();
-          resp += c;
-        }
-        if (resp.indexOf("OK") != -1) {
-          Serial.print(F(">>> [FOUND!] SIM800L responding on RX: Pin "));
-          if (rx >= 14) { Serial.print("A"); Serial.print(rx - 14); } else Serial.print(rx);
-          Serial.print(F(", TX: Pin "));
-          if (tx >= 14) { Serial.print("A"); Serial.print(tx - 14); } else Serial.print(tx);
-          Serial.print(F(" @ "));
-          Serial.print(baud);
-          Serial.println(F(" baud!"));
-
-          gsmRx = rx;
-          gsmTx = tx;
-          gsmBaud = baud;
-          gsmSerial = new SoftwareSerial(rx, tx);
-          gsmSerial->begin(baud);
-          gsmSerial->listen();
-          return true;
-        }
-      }
+  // Try 9600 first, then 115200
+  r = sendAT("AT", 1500);
+  if (r.indexOf("OK") == -1) {
+    gsmSerial.begin(115200);
+    r = sendAT("AT", 1000);
+    if (r.indexOf("OK") != -1) {
+      sendAT("AT+IPR=9600", 500); // Lock to 9600
     }
-  }
-  return false;
-}
-
-// ── Initialize BSNL 2G GPRS Connection ────────────────────────────────────
-void initCellularGPRS() {
-  if (!autoDetectModem()) {
-    Serial.println(F("\n[!] SIM800L did not reply on any probed pins."));
-    Serial.println(F("    CHECKLIST:"));
-    Serial.println(F("    1. Is the RED SIM800L NET LED blinking?"));
-    Serial.println(F("       (If OFF: Plug 9V/12V DC power adapter into Arduino DC jack)"));
-    Serial.println(F("    2. Is LM2596 GND connected to Arduino GND (Common Ground)?\n"));
-    gprsReady = false;
-    return;
+    gsmSerial.begin(9600);
+    sendAT("AT", 1000);
   }
 
-  gsmSerial->listen();
-  sendGsm("ATE0", 1000);
-  sendGsm("AT+CFUN=1", 1500);
+  sendAT("ATE0", 1000);             // Echo off
+  sendAT("AT+CFUN=1", 1500);        // Full function
+  sendAT("AT+CPIN?", 2000);         // SIM check
+  sendAT("AT+CSQ", 1500);           // Signal strength
 
-  // Check SIM card status
-  String r2 = sendGsm("AT+CPIN?", 2000);
-  if (r2.indexOf("READY") != -1) {
-    Serial.println(F("[MODEM] BSNL SIM Card Detected & Ready!"));
-  } else {
-    Serial.println(F("[!] SIM Card not detected — check SIM orientation."));
-  }
-
-  // Check 2G Signal Quality
-  String r3 = sendGsm("AT+CSQ", 1500);
-  int idx = r3.indexOf("+CSQ:");
-  if (idx != -1) {
-    int csq = r3.substring(idx + 6, idx + 8).toInt();
-    Serial.print(F("[MODEM] Signal Quality: "));
-    Serial.print(csq);
-    Serial.println(F("/31"));
-  }
-
-  // Check Network Registration
-  Serial.println(F("[MODEM] Registering on BSNL Cell Tower..."));
+  // Wait for network
   for (int i = 0; i < 5; i++) {
-    String reg = sendGsm("AT+CREG?", 2000);
-    if (reg.indexOf("0,1") != -1 || reg.indexOf("0,5") != -1) {
-      Serial.println(F("[MODEM] Registered on 2G Network!"));
-      break;
-    }
+    r = sendAT("AT+CREG?", 2000);
+    if (r.indexOf("0,1") != -1 || r.indexOf("0,5") != -1) break;
     delay(1000);
   }
 
-  // Attach GPRS Bearer
-  Serial.println(F("[MODEM] Attaching BSNL GPRS Internet ('bsnlnet')..."));
-  sendGsm("AT+SAPBR=3,1,\"Contype\",\"GPRS\"", 1500);
-  sendGsm(String("AT+SAPBR=3,1,\"APN\",\"") + APN + "\"", 1500);
-  
-  String bearer = sendGsm("AT+SAPBR=1,1", 8000);
-  if (bearer.indexOf("OK") != -1) {
-    Serial.println(F("[MODEM] BSNL GPRS Internet CONNECTED!"));
+  // Attach GPRS - try bsnlnet first, then www
+  sendAT("AT+SAPBR=3,1,\"Contype\",\"GPRS\"", 1500);
+  sendAT("AT+SAPBR=3,1,\"APN\",\"bsnlnet\"", 1500);
+  r = sendAT("AT+SAPBR=1,1", 8000);
+  if (r.indexOf("OK") != -1) {
     gprsReady = true;
   } else {
-    // Try fallback APN "www"
-    sendGsm(String("AT+SAPBR=3,1,\"APN\",\"www\""), 1500);
-    String b2 = sendGsm("AT+SAPBR=1,1", 8000);
-    if (b2.indexOf("OK") != -1) {
-      Serial.println(F("[MODEM] BSNL GPRS Connected via fallback APN (www)!"));
-      gprsReady = true;
-    } else {
-      Serial.println(F("[!] GPRS Connection Failed. Check 2G Data Pack."));
-    }
+    sendAT("AT+SAPBR=3,1,\"APN\",\"www\"", 1500);
+    r = sendAT("AT+SAPBR=1,1", 8000);
+    if (r.indexOf("OK") != -1) gprsReady = true;
   }
-
-  // Query IP
-  String ipResp = sendGsm("AT+SAPBR=2,1", 2000);
-  Serial.print(F("[MODEM] GPRS IP: "));
-  Serial.println(ipResp);
+  sendAT("AT+SAPBR=2,1", 2000); // Print assigned IP
 }
 
-// ── Transmit Telemetry to Render Backend via HTTPS POST ────────────────────
-bool transmitGprsHTTP(float lat, float lng, float speedKmh, float headingDeg, int sats, float alt) {
-  if (!gsmSerial) return false;
-  gsmSerial->listen();
+void postGPS(float lat, float lng, float speed, float heading, int sats, float alt) {
+  String body = String("{\"device_id\":\"") + DEVICE_ID +
+                "\",\"lat\":"       + String(lat, 6) +
+                ",\"lng\":"        + String(lng, 6) +
+                ",\"speed_kmh\":"  + String(speed, 1) +
+                ",\"heading\":"    + String(heading, 1) +
+                ",\"altitude\":"   + String(alt, 1) +
+                ",\"satellites\":" + String(sats) +
+                ",\"fix_quality\":1,\"source\":\"arduino\"}";
 
-  String jsonBody = String(F("{\"device_id\":\"")) + DEVICE_ID +
-                    String(F("\",\"lat\":")) + String(lat, 6) +
-                    String(F(",\"lng\":")) + String(lng, 6) +
-                    String(F(",\"speed_kmh\":")) + String(speedKmh, 1) +
-                    String(F(",\"heading\":")) + String(headingDeg, 1) +
-                    String(F(",\"altitude\":")) + String(alt, 1) +
-                    String(F(",\"satellites\":")) + String(sats) +
-                    String(F(",\"fix_quality\":1,\"source\":\"arduino\"}"));
-
-  Serial.println(F("\n[UPLINK] Sending Telemetry to Render Cloud Server..."));
-
-  sendGsm("AT+HTTPINIT", 2000);
-  sendGsm("AT+HTTPSSL=1", 1000); // Enable SSL for HTTPS
-  sendGsm(String("AT+HTTPPARA=\"URL\",\"https://") + SERVER_HOST + "/api/gps-update\"", 2000);
-  sendGsm("AT+HTTPPARA=\"CID\",1", 1000);
-  sendGsm("AT+HTTPPARA=\"CONTENT\",\"application/json\"", 1000);
-  sendGsm(String("AT+HTTPPARA=\"USERDATA\",\"x-api-key: ") + API_KEY + "\"", 1000);
-
-  // Send JSON Body
-  sendGsm(String("AT+HTTPDATA=") + jsonBody.length() + ",10000", 2000);
-  gsmSerial->print(jsonBody);
-  delay(150);
-
-  // Trigger POST Action
-  String actionResp = sendGsm("AT+HTTPACTION=1", 8000);
-  sendGsm("AT+HTTPTERM", 1000);
-
-  Serial.print(F("[SERVER RESPONSE] "));
-  Serial.println(actionResp);
-
-  if (actionResp.indexOf(",200,") != -1 || actionResp.indexOf(",201,") != -1) {
-    Serial.println(F(">>> [SUCCESS 200 OK] Website updated live with Ambulance 1 location!"));
-    return true;
-  }
-  return false;
+  sendAT("AT+HTTPINIT", 2000);
+  sendAT("AT+HTTPSSL=1", 1000);
+  sendAT(String("AT+HTTPPARA=\"URL\",\"https://") + SERVER_HOST + "/api/gps-update\"", 2000);
+  sendAT("AT+HTTPPARA=\"CID\",1", 1000);
+  sendAT("AT+HTTPPARA=\"CONTENT\",\"application/json\"", 1000);
+  sendAT(String("AT+HTTPPARA=\"USERDATA\",\"x-api-key: ") + API_KEY + "\"", 1000);
+  sendAT(String("AT+HTTPDATA=") + body.length() + ",10000", 2000);
+  gsmSerial.println(body);   // Send JSON body to SIM800L
+  delay(200);
+  sendAT("AT+HTTPACTION=1", 8000);
+  sendAT("AT+HTTPTERM", 1000);
 }
 
 void setup() {
-  Serial.begin(9600);
-  gpsSerial.begin(9600);
+  Serial.begin(9600);      // Debug output via USB (Pin 0 & 1 — free for upload)
+  gsmSerial.begin(9600);   // SIM800L on SoftwareSerial (Pin 4 & 5)
+  gpsSerial.begin(9600);   // GPS on SoftwareSerial (Pin 8 & 9)
+  gpsSerial.listen();
+  delay(2000);
+  Serial.println("[BOOT] TN Ambulance Arduino v2");
 
-  Serial.println(F("\n============================================================"));
-  Serial.println(F("  TN 108 AMBULANCE TELEMETRY — RENDER CLOUD CONNECTED       "));
-  Serial.println(F("  Ambulance Device : ARD-001                                "));
-  Serial.println(F("  Server Target    : https://tn-ambulance-backend.onrender.com"));
-  Serial.println(F("============================================================"));
+  initGPRS();
 
-  // Initialize Cellular GPRS (Auto-probes all pins)
-  initCellularGPRS();
-
-  // Send Initial Boot Ping to Website
+  // Immediately ping Render website on boot
   if (gprsReady) {
-    Serial.println(F("\n[BOOT] Sending initial connection ping to website..."));
-    transmitGprsHTTP(lastValidLat, lastValidLng, 0.0, 0.0, 4, 12.0);
+    postGPS(lastLat, lastLng, 0.0, 0.0, 4, 12.0);
   }
 
-  // Switch to GPS listening
   gpsSerial.listen();
-  Serial.println(F("\n[GPS] Listening for NEO-6M satellite coordinates...\n"));
 }
 
 void loop() {
-  // 1. Read GPS NMEA stream
+  // Read GPS from Pins 8 & 9
   gpsSerial.listen();
   unsigned long start = millis();
   while (millis() - start < 1000) {
     while (gpsSerial.available()) {
-      char c = gpsSerial.read();
-      gps.encode(c);
-      Serial.write(c); // Forward raw NMEA to PC USB
+      gps.encode(gpsSerial.read());
     }
   }
 
-  unsigned long now = millis();
+  // Post every 3 seconds
+  if (millis() - lastPostTime >= 3000) {
+    lastPostTime = millis();
 
-  // 2. Transmit periodic updates
-  if (now - lastPostTime >= 3000) {
-    lastPostTime = now;
-
-    float lat = lastValidLat;
-    float lng = lastValidLng;
-    float speed = 0.0;
+    float lat     = lastLat;
+    float lng     = lastLng;
+    float speed   = 0.0;
     float heading = 0.0;
-    float alt = 12.0;
-    int sats = gps.satellites.value();
+    float alt     = 12.0;
+    int   sats    = gps.satellites.value();
 
     if (gps.location.isValid()) {
-      lat = gps.location.lat();
-      lng = gps.location.lng();
-      speed = gps.speed.kmph();
+      lat     = gps.location.lat();
+      lng     = gps.location.lng();
+      speed   = gps.speed.kmph();
       heading = gps.course.deg();
-      alt = gps.altitude.meters();
-      lastValidLat = lat;
-      lastValidLng = lng;
-
-      Serial.print(F("\n[GPS FIX] Lat: "));
-      Serial.print(lat, 6);
-      Serial.print(F(" | Lng: "));
-      Serial.print(lng, 6);
-      Serial.print(F(" | Sats: "));
-      Serial.println(sats);
-    } else {
-      Serial.print(F("\n[GPS SEARCHING...] Sats in view: "));
-      Serial.print(sats);
-      Serial.println(F(" (Take antenna near window)"));
+      alt     = gps.altitude.meters();
+      lastLat = lat;
+      lastLng = lng;
     }
 
-    // Transmit to Render backend
     if (gprsReady) {
-      transmitGprsHTTP(lat, lng, speed, heading, sats, alt);
+      postGPS(lat, lng, speed, heading, sats, alt);
       gpsSerial.listen();
     }
   }

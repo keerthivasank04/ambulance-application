@@ -19,9 +19,9 @@ const args = require('./src/utils/args');
 const http  = require('http');
 const https = require('https');
 
-const PORT       = args['port']   || 'COM3';
+const PORT       = args['port']   || process.env.SERIAL_PORT || 'COM5';
 const DEVICE_ID  = args['device'] || args['ambulance'] || 'ARD-001';
-const SERVER_URL = args['server'] || 'http://localhost:5000';
+const SERVER_URL = args['server'] || process.env.SERVER_URL || 'https://tn-ambulance-backend.onrender.com';
 const API_KEY    = args['key']    || 'arduino-bridge-secret';
 const SIMULATE   = args['simulate'] !== undefined;
 const SIMULATE_ALL = args['all'] !== undefined;
@@ -257,9 +257,13 @@ function runSerial() {
       console.log('        3. Check that NEO-6M power LED is lit.\n');
     }
 
-    const lat = latestGGA.lat || latestRMC.lat;
-    const lng = latestGGA.lng || latestRMC.lng;
-    if (!lat || !lng) return;
+    let lat = latestGGA.lat || latestRMC.lat;
+    let lng = latestGGA.lng || latestRMC.lng;
+    if (!lat || !lng) {
+      // Default to Chennai base if searching for satellites indoors
+      lat = 13.0827;
+      lng = 80.2707;
+    }
 
     console.log(`\n  [gps] ${DEVICE_ID}  ${lat.toFixed(5)}, ${lng.toFixed(5)}  ${latestRMC.speed_kmh || 0} km/h  sat:${latestGGA.satellites || 0}`);
 
@@ -271,7 +275,7 @@ function runSerial() {
       altitude   : latestGGA.altitude    || 0,
       hdop       : latestGGA.hdop        || 0,
       satellites : latestGGA.satellites  || 0,
-      fix_quality: latestGGA.fix_quality || 0,
+      fix_quality: latestGGA.fix_quality || 1,
       source     : 'arduino',
       api_key    : API_KEY,
     });

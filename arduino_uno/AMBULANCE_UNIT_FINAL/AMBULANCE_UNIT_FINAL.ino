@@ -123,13 +123,14 @@ bool setupGPRS() {
 
 // Send GPS telemetry HTTP POST over SIM800L
 bool postTelemetry(float lat, float lng, float speedKmh, float headingDeg, int sats) {
-  // Construct JSON body
+  // Construct JSON body with embedded api_key for universal SIM800L compatibility
   String body = String("{\"device_id\":\"") + DEVICE_ID +
-                "\",\"lat\":"        + String(lat, 6) +
-                ",\"lng\":"         + String(lng, 6) +
-                ",\"speed_kmh\":"   + String(speedKmh, 1) +
-                ",\"heading\":"     + String(headingDeg, 1) +
-                ",\"satellites\":"  + String(sats) +
+                "\",\"api_key\":\""  + API_KEY + "\"" +
+                ",\"lat\":"          + String(lat, 6) +
+                ",\"lng\":"          + String(lng, 6) +
+                ",\"speed_kmh\":"    + String(speedKmh, 1) +
+                ",\"heading\":"      + String(headingDeg, 1) +
+                ",\"satellites\":"   + String(sats) +
                 ",\"fix_quality\":1,\"source\":\"arduino\"}";
 
   sendCmd("AT+HTTPTERM", "OK", 1000); // Terminate previous HTTP session

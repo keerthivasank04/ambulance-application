@@ -80,23 +80,64 @@ bool initGPRS() {
   gprsReady = false;
   Serial.println(F("\n--- Connecting to BSNL GPRS Network ---"));
 
-  // Synchronize baud rate
-  for (int i = 0; i < 3; i++) {
-    sendGSM("AT", "OK", 800);
-    delay(150);
+  // Resync baud after possible baud-rate switch
+  for (int i = 0; i < 5; i++) {
+    sendGSM("AT", "OK", 1000);
+    delay(200);
   }
 
-  sendGSM("ATE0", "OK", 1000);        // Echo off
-  sendGSM("AT+CFUN=1", "OK", 2000);   // Full mode
-  sendGSM("AT+CPIN?", "READY", 2000); // Check SIM status
-  sendGSM("AT+CSQ", "OK", 1500);      // Signal strength
+  sendGSM("ATE0", "OK", 1500);        // Echo off
+  sendGSM("AT+CFUN=0", "OK", 3000);   // Minimum mode first
+  delay(1000);
+  sendGSM("AT+CFUN=1", "OK", 5000);   // Full mode (forces SIM re-init)
+  delay(3000);                         // Wait for SIM card to wake up
+
+  // Retry AT+CPIN? until READY (up to 15 seconds)
+  bool simReady = false;
+  for (int i = 0; i < 10; i++) {
+    Serial.print(F("[SIM] CPIN check ")); Serial.println(i + 1);
+    if (sendGSM("AT+CPIN?", "READY", 2000)) {
+      simReady = true;
+      Serial.println(F("[SIM] SIM Card is READY!"));
+      break;
+    }
+    delay(1500);
+  }
+  if (!simReady) {
+    Serial.println(F("[SIM] WARNING: SIM not responding. Check SIM insertion."));
+  }
+
+  // Wait for signal strength > 0 (up to 30 seconds)
+  Serial.println(F("[GSM] Waiting for BSNL signal..."));
+  for (int i = 0; i < 20; i++) {
+    gsm->listen();
+    while (gsm->available()) gsm->read();
+    gsm->println("AT+CSQ");
+    delay(800);
+    String csqResp = "";
+    while (gsm->available()) csqResp += (char)gsm->read();
+    Serial.print(F("[GSM] CSQ: ")); Serial.println(csqResp);
+    // CSQ > 0 and not 99 means real signal
+    if (csqResp.indexOf("+CSQ:") != -1) {
+      int comma = csqResp.indexOf(',');
+      int colon = csqResp.indexOf(':');
+      if (comma > colon) {
+        int rssi = csqResp.substring(colon + 2, comma).toInt();
+        if (rssi > 0 && rssi < 99) {
+          Serial.print(F("[GSM] Signal OK! RSSI=")); Serial.println(rssi);
+          break;
+        }
+      }
+    }
+    delay(1200);
+  }
 
   // Wait for network registration (1 = home, 5 = roaming)
-  for (int i = 0; i < 15; i++) {
+  for (int i = 0; i < 20; i++) {
     gsm->listen();
     while (gsm->available()) gsm->read();
     gsm->println(F("AT+CREG?"));
-    delay(500);
+    delay(600);
     String r = "";
     while (gsm->available()) r += (char)gsm->read();
     Serial.print(F("[GSM] CREG: ")); Serial.println(r);
@@ -104,7 +145,7 @@ bool initGPRS() {
       Serial.println(F("[GSM] Network Registered Successfully!"));
       break;
     }
-    delay(1000);
+    delay(1500);
   }
 
   // Attach GPRS Packet Service

@@ -26,8 +26,10 @@ const char API_KEY[]   = "arduino-bridge-secret";
 const char SERVER_URL[]= "https://tn-ambulance-backend.onrender.com/api/gps-update";
 const char BSNL_APN[]  = "bsnlnet";
 
-// SIM800L on Pins 4 (RX) & 5 (TX)
-SoftwareSerial gsmSerial(4, 5);
+// SIM800L — two objects to auto-detect TX/RX orientation
+SoftwareSerial gsmSerial(4, 5);      // Pin 4 = RX, Pin 5 = TX
+SoftwareSerial gsmSerialSwap(5, 4);  // Pin 5 = RX, Pin 4 = TX (swapped)
+SoftwareSerial *gsm = &gsmSerial;    // Active pointer (set during setup)
 
 // NEO-6M GPS on Pins 8 (RX) & 9 (TX)
 SoftwareSerial gpsSerial(8, 9);
@@ -46,17 +48,17 @@ int curSats = 6;
 
 // Send AT command to SIM800L and print live response to USB Serial
 bool sendGSM(const String& cmd, const char* expected, unsigned long timeout = 3000) {
-  gsmSerial.listen();
-  while (gsmSerial.available()) gsmSerial.read(); // clean buffer
-  
-  gsmSerial.println(cmd);
+  gsm->listen();
+  while (gsm->available()) gsm->read(); // clean buffer
+
+  gsm->println(cmd);
   Serial.print(F("[GSM] >> ")); Serial.println(cmd);
-  
+
   unsigned long start = millis();
   String resp = "";
   while (millis() - start < timeout) {
-    while (gsmSerial.available()) {
-      char c = (char)gsmSerial.read();
+    while (gsm->available()) {
+      char c = (char)gsm->read();
       resp += c;
     }
     if (resp.indexOf(expected) != -1) {
@@ -91,12 +93,12 @@ bool initGPRS() {
 
   // Wait for network registration (1 = home, 5 = roaming)
   for (int i = 0; i < 15; i++) {
-    gsmSerial.listen();
-    while (gsmSerial.available()) gsmSerial.read();
-    gsmSerial.println(F("AT+CREG?"));
+    gsm->listen();
+    while (gsm->available()) gsm->read();
+    gsm->println(F("AT+CREG?"));
     delay(500);
     String r = "";
-    while (gsmSerial.available()) r += (char)gsmSerial.read();
+    while (gsm->available()) r += (char)gsm->read();
     Serial.print(F("[GSM] CREG: ")); Serial.println(r);
     if (r.indexOf(",1") != -1 || r.indexOf(",5") != -1) {
       Serial.println(F("[GSM] Network Registered Successfully!"));
@@ -118,7 +120,7 @@ bool initGPRS() {
   String apn1 = String("AT+SAPBR=3,1,\"APN\",\"") + BSNL_APN + "\"";
   sendGSM(apn1, "OK", 2000);
   if (sendGSM("AT+SAPBR=1,1", "OK", 8000)) {
-    sendGSM("AT+SAPBR=2,1", "OK", 2000); // Print assigned IP
+    sendGSM("AT+SAPBR=2,1", "OK", 2000);
     gprsReady = true;
     digitalWrite(LED_PIN, HIGH);
     Serial.println(F("[GSM] GPRS ONLINE (APN: bsnlnet)\n"));
@@ -152,7 +154,6 @@ bool initGPRS() {
 
 // Transmit GPS telemetry HTTP POST to Render Backend
 bool postGPS(float lat, float lng, float speedKmh, float headingDeg, int sats) {
-  // Format JSON payload
   String json = String("{\"device_id\":\"") + DEVICE_ID +
                 "\",\"api_key\":\""  + API_KEY + "\"" +
                 ",\"lat\":"          + String(lat, 6) +
@@ -169,7 +170,7 @@ bool postGPS(float lat, float lng, float speedKmh, float headingDeg, int sats) {
 
   if (!sendGSM("AT+HTTPINIT", "OK", 3000)) return false;
   sendGSM("AT+HTTPSSL=1", "OK", 1000);
-  
+
   String url = String("AT+HTTPPARA=\"URL\",\"") + SERVER_URL + "\"";
   sendGSM(url, "OK", 2000);
   sendGSM("AT+HTTPPARA=\"CID\",1", "OK", 1000);
@@ -177,22 +178,22 @@ bool postGPS(float lat, float lng, float speedKmh, float headingDeg, int sats) {
 
   String dataCmd = String("AT+HTTPDATA=") + json.length() + ",10000";
   if (sendGSM(dataCmd, "DOWNLOAD", 3000)) {
-    gsmSerial.println(json);
+    gsm->println(json);
     delay(250);
   } else {
     sendGSM("AT+HTTPTERM", "OK", 1000);
     return false;
   }
 
-  gsmSerial.listen();
-  while (gsmSerial.available()) gsmSerial.read();
-  gsmSerial.println(F("AT+HTTPACTION=1"));
-  
+  gsm->listen();
+  while (gsm->available()) gsm->read();
+  gsm->println(F("AT+HTTPACTION=1"));
+
   unsigned long startAction = millis();
   bool success = false;
   while (millis() - startAction < 10000) {
-    if (gsmSerial.available()) {
-      String line = gsmSerial.readString();
+    if (gsm->available()) {
+      String line = gsm->readString();
       Serial.print(F("[GSM] HTTPACTION: ")); Serial.println(line);
       if (line.indexOf("200") != -1 || line.indexOf("+HTTPACTION: 1,200") != -1) {
         success = true;
@@ -213,61 +214,73 @@ bool postGPS(float lat, float lng, float speedKmh, float headingDeg, int sats) {
   return success;
 }
 
+// Helper: probe a SoftwareSerial object at a given baud for "OK"
+bool probeGSM(SoftwareSerial &port, long baud) {
+  port.begin(baud);
+  port.listen();
+  delay(100);
+  while (port.available()) port.read();
+  port.println("AT");
+  delay(700);
+  String r = "";
+  while (port.available()) r += (char)port.read();
+  Serial.print(F("[PROBE] baud=")); Serial.print(baud);
+  Serial.print(F(" -> \"")); Serial.print(r); Serial.println(F("\""));
+  return (r.indexOf("OK") != -1 || r.indexOf("AT") != -1);
+}
+
 void setup() {
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, LOW);
 
-  // USB Serial Monitor Debug Output (Pins 0 & 1 free!)
   Serial.begin(9600);
   Serial.println(F("=========================================="));
-  Serial.println(F("TN 108 AMBULANCE — HARDWARE FIRMWARE (PLAN 3)"));
-  Serial.println(F("SIM800L: Pins 4 & 5 | GPS: Pins 8 & 9"));
+  Serial.println(F("TN 108 AMBULANCE — PLAN 3 (DUAL-SERIAL)"));
+  Serial.println(F("SIM800L: Pins 4/5 | GPS: Pins 8/9"));
   Serial.println(F("=========================================="));
 
-  // NEO-6M GPS Serial (Pins 8 & 9)
   gpsSerial.begin(9600);
 
-  // Auto-detect SIM800L baud rate on Pins 4 & 5
-  long bauds[] = {9600, 19200, 38400, 57600, 115200, 4800};
+  // Auto-detect: try both pin orientations (4,5) and (5,4) at common baud rates
+  long bauds[] = {9600, 115200, 57600, 38400, 19200, 4800};
   bool found = false;
+
   for (int b = 0; b < 6 && !found; b++) {
-    gsmSerial.begin(bauds[b]);
-    gsmSerial.listen();
-    delay(100);
-    // Flush
-    while (gsmSerial.available()) gsmSerial.read();
-    // Try AT
-    gsmSerial.println("AT");
-    delay(600);
-    String resp = "";
-    while (gsmSerial.available()) resp += (char)gsmSerial.read();
-    Serial.print(F("[BAUD PROBE] ")); Serial.print(bauds[b]);
-    Serial.print(F(" -> \"")); Serial.print(resp); Serial.println(F("\""));
-    if (resp.indexOf("OK") != -1 || resp.indexOf("AT") != -1) {
-      Serial.print(F("[BAUD] SIM800L found at ")); Serial.println(bauds[b]);
-      // If not 9600, fix to 9600
+    Serial.print(F("\n[DETECT] Trying (RX=4,TX=5) at ")); Serial.println(bauds[b]);
+    if (probeGSM(gsmSerial, bauds[b])) {
+      Serial.println(F("[DETECT] Found SIM800L on Pins RX=4, TX=5"));
+      gsm = &gsmSerial;
       if (bauds[b] != 9600) {
         gsmSerial.println("AT+IPR=9600");
         delay(500);
         gsmSerial.begin(9600);
-        delay(300);
-        Serial.println(F("[BAUD] Reset SIM800L to 9600 baud."));
       }
       found = true;
+      break;
+    }
+
+    Serial.print(F("[DETECT] Trying (RX=5,TX=4) at ")); Serial.println(bauds[b]);
+    if (probeGSM(gsmSerialSwap, bauds[b])) {
+      Serial.println(F("[DETECT] Found SIM800L on Pins RX=5, TX=4 (swapped)"));
+      gsm = &gsmSerialSwap;
+      if (bauds[b] != 9600) {
+        gsmSerialSwap.println("AT+IPR=9600");
+        delay(500);
+        gsmSerialSwap.begin(9600);
+      }
+      found = true;
+      break;
     }
   }
 
   if (!found) {
-    Serial.println(F("[BAUD] WARNING: SIM800L not responding. Check wiring:"));
-    Serial.println(F("  SIM800L TX --> Arduino Pin 4"));
-    Serial.println(F("  SIM800L RX --> Arduino Pin 5"));
-    Serial.println(F("  SIM800L VCC --> Buck converter (3.9-4.2V)"));
-    Serial.println(F("  ALL GND pins connected together"));
-    Serial.println(F("Retrying in 5 seconds..."));
-    delay(5000);
+    Serial.println(F("\n[ERROR] SIM800L not found on Pins 4/5."));
+    Serial.println(F("Check: VCC=3.9-4.2V, GND shared, TX and RX connected."));
+  } else {
+    Serial.println(F("[OK] SIM800L detected and ready!"));
   }
 
-  delay(1000); // Stabilization
+  delay(500);
   initGPRS();
 }
 

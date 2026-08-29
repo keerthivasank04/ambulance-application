@@ -23,13 +23,14 @@ const app    = express();
 const server = http.createServer(app);
 const PORT   = process.env.PORT || 5000;
 
-const ORIGINS = process.env.CORS_ORIGINS
-  ? process.env.CORS_ORIGINS.split(',').map(s => s.trim())
-  : [
-      'http://localhost:5173',
-      'http://localhost:3000',
-      'http://localhost:4173',
-    ];
+  const ORIGINS = process.env.CORS_ORIGINS
+    ? process.env.CORS_ORIGINS.split(',').map(s => s.trim())
+    : [
+        'http://localhost:5173',
+        'http://localhost:3000',
+        'http://localhost:4173',
+        'https://tn-ambulance-frontend.vercel.app',
+      ];
 
 const io = new Server(server, {
   cors: { origin: ORIGINS, methods: ['GET', 'POST'], credentials: true },

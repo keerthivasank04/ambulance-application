@@ -1,189 +1,199 @@
 /**
  * ============================================================================
- * TN 108 AMBULANCE — STANDALONE BSNL SIM800L GPRS TELEMETRY FIRMWARE
+ * TN 108 AMBULANCE — PLAN 3 PRODUCTION FIRMWARE (DUAL-SERIAL)
  *
  * HARDWARE CONNECTIONS:
- *   SIM800L TX  --> Arduino Pin 0 (RX)
- *   SIM800L RX  --> Arduino Pin 1 (TX)
- *   SIM800L VCC --> External Power / 5V (SIM800L power LED steady)
+ *   SIM800L TX  --> Arduino Pin 4 (gsmSerial RX)
+ *   SIM800L RX  --> Arduino Pin 5 (gsmSerial TX)
+ *   SIM800L VCC --> Step-Down Buck Converter (3.9V - 4.2V)
  *   SIM800L GND --> Common GND with Arduino
  *
- *   NEO-6M GPS TX --> Arduino Pin 8 (SoftwareSerial RX)
- *   NEO-6M GPS RX --> Arduino Pin 9 (SoftwareSerial TX)
+ *   NEO-6M GPS TX --> Arduino Pin 8 (gpsSerial RX)
+ *   NEO-6M GPS RX --> Arduino Pin 9 (gpsSerial TX)
  *   NEO-6M VCC    --> Arduino 5V
  *   NEO-6M GND    --> Common GND
  *
- * BEHAVIOR:
- *   - Connects to BSNL 2G GPRS via APN "bsnlnet" / "portalnmms"
- *   - Reads live NEO-6M satellite coordinates if available.
- *   - If testing indoors without sky view, calculates smooth Chennai route telemetry.
- *   - Transmits HTTP POST to Render backend every 4 seconds.
- *   - Built-in Pin 13 LED turns ON when connected to GPRS and blinks on each POST!
+ *   Pins 0 & 1 (USB Serial) --> Dedicated for USB Live Debugging at 9600 baud!
  * ============================================================================
  */
 
 #include <SoftwareSerial.h>
 #include <TinyGPS++.h>
 
-// Server & Device Configuration
+// Device Configuration
 const char DEVICE_ID[] = "ARD-001";
 const char API_KEY[]   = "arduino-bridge-secret";
 const char SERVER_URL[]= "https://tn-ambulance-backend.onrender.com/api/gps-update";
 const char BSNL_APN[]  = "bsnlnet";
 
-// NEO-6M GPS on Pins 8 & 9
+// SIM800L on Pins 4 (RX) & 5 (TX)
+SoftwareSerial gsmSerial(4, 5);
+
+// NEO-6M GPS on Pins 8 (RX) & 9 (TX)
 SoftwareSerial gpsSerial(8, 9);
 TinyGPSPlus gps;
 
 const int LED_PIN = 13;
-unsigned long lastSend = 0;
-bool gprsOnline = false;
+unsigned long lastSendTime = 0;
+bool gprsReady = false;
 
-// Real-time Coordinates (Base: Chennai Central -> Egmore corridor)
-float lat = 13.0827;
-float lng = 80.2707;
-float speed = 35.0;
-float heading = 45.0;
-int sats = 6;
+// Telemetry state (Chennai corridor)
+float curLat = 13.0827;
+float curLng = 80.2707;
+float curSpeed = 36.0;
+float curHeading = 45.0;
+int curSats = 6;
 
-// Clear serial buffer
-void cleanBuffer() {
-  while (Serial.available()) Serial.read();
-}
-
-// Send command and check for expected token
-bool execAT(const String& cmd, const char* expected, unsigned long timeout = 3000) {
-  cleanBuffer();
-  Serial.println(cmd);
-  unsigned long t = millis();
+// Send AT command to SIM800L and print live response to USB Serial
+bool sendGSM(const String& cmd, const char* expected, unsigned long timeout = 3000) {
+  gsmSerial.listen();
+  while (gsmSerial.available()) gsmSerial.read(); // clean buffer
+  
+  gsmSerial.println(cmd);
+  Serial.print(F("[GSM] >> ")); Serial.println(cmd);
+  
+  unsigned long start = millis();
   String resp = "";
-  while (millis() - t < timeout) {
-    while (Serial.available()) {
-      resp += (char)Serial.read();
+  while (millis() - start < timeout) {
+    while (gsmSerial.available()) {
+      char c = (char)gsmSerial.read();
+      resp += c;
     }
-    if (resp.indexOf(expected) != -1) return true;
-    if (resp.indexOf("ERROR") != -1) return false;
-  }
-  return false;
-}
-
-// Wait for network registration (Home 0,1 or Roaming 0,5)
-bool waitForNetwork() {
-  for (int i = 0; i < 15; i++) {
-    cleanBuffer();
-    Serial.println("AT+CREG?");
-    delay(500);
-    String r = "";
-    while (Serial.available()) r += (char)Serial.read();
-    if (r.indexOf(",1") != -1 || r.indexOf(",5") != -1) {
+    if (resp.indexOf(expected) != -1) {
+      Serial.print(F("[GSM] << OK: ")); Serial.println(resp);
       return true;
     }
-    delay(1000);
+    if (resp.indexOf("ERROR") != -1) {
+      Serial.print(F("[GSM] << ERR: ")); Serial.println(resp);
+      return false;
+    }
   }
+  Serial.print(F("[GSM] << TIMEOUT: ")); Serial.println(resp);
   return false;
 }
 
-// Initialize BSNL 2G GPRS connection
-bool initBSNLGPRS() {
+// Connect to BSNL 2G GPRS
+bool initGPRS() {
   digitalWrite(LED_PIN, LOW);
-  gprsOnline = false;
+  gprsReady = false;
+  Serial.println(F("\n--- Connecting to BSNL GPRS Network ---"));
 
-  // Auto-baud sync
+  // Synchronize baud rate
   for (int i = 0; i < 3; i++) {
-    execAT("AT", "OK", 800);
+    sendGSM("AT", "OK", 800);
     delay(150);
   }
 
-  execAT("ATE0", "OK", 1000);        // Echo off
-  execAT("AT+CFUN=1", "OK", 2000);   // Full phone mode
-  execAT("AT+CPIN?", "READY", 2000); // Check SIM ready
+  sendGSM("ATE0", "OK", 1000);        // Echo off
+  sendGSM("AT+CFUN=1", "OK", 2000);   // Full mode
+  sendGSM("AT+CPIN?", "READY", 2000); // Check SIM status
+  sendGSM("AT+CSQ", "OK", 1500);      // Signal strength
 
-  // Wait for BSNL tower registration
-  waitForNetwork();
+  // Wait for network registration (1 = home, 5 = roaming)
+  for (int i = 0; i < 15; i++) {
+    gsmSerial.listen();
+    while (gsmSerial.available()) gsmSerial.read();
+    gsmSerial.println(F("AT+CREG?"));
+    delay(500);
+    String r = "";
+    while (gsmSerial.available()) r += (char)gsmSerial.read();
+    Serial.print(F("[GSM] CREG: ")); Serial.println(r);
+    if (r.indexOf(",1") != -1 || r.indexOf(",5") != -1) {
+      Serial.println(F("[GSM] Network Registered Successfully!"));
+      break;
+    }
+    delay(1000);
+  }
 
-  // Attach GPRS Packet service
-  execAT("AT+CGATT=1", "OK", 4000);
+  // Attach GPRS Packet Service
+  sendGSM("AT+CGATT=1", "OK", 4000);
   delay(300);
 
-  // Close any stale SAPBR profile
-  execAT("AT+SAPBR=0,1", "OK", 2000);
+  // Configure GPRS Bearer
+  sendGSM("AT+SAPBR=0,1", "OK", 2000);
   delay(300);
-
-  // Set GPRS context
-  execAT("AT+SAPBR=3,1,\"Contype\",\"GPRS\"", "OK", 2000);
-  
-  // Set PDP context
-  String pdp = String("AT+CGDCONT=1,\"IP\",\"") + BSNL_APN + "\"";
-  execAT(pdp, "OK", 2000);
+  sendGSM("AT+SAPBR=3,1,\"Contype\",\"GPRS\"", "OK", 2000);
 
   // Try APN 1: bsnlnet
   String apn1 = String("AT+SAPBR=3,1,\"APN\",\"") + BSNL_APN + "\"";
-  execAT(apn1, "OK", 2000);
-  if (execAT("AT+SAPBR=1,1", "OK", 8000)) {
-    gprsOnline = true;
+  sendGSM(apn1, "OK", 2000);
+  if (sendGSM("AT+SAPBR=1,1", "OK", 8000)) {
+    sendGSM("AT+SAPBR=2,1", "OK", 2000); // Print assigned IP
+    gprsReady = true;
     digitalWrite(LED_PIN, HIGH);
+    Serial.println(F("[GSM] GPRS ONLINE (APN: bsnlnet)\n"));
     return true;
   }
 
-  // Try APN 2: portalnmms (BSNL Tamil Nadu / Chennai)
-  execAT("AT+SAPBR=3,1,\"APN\",\"portalnmms\"", "OK", 2000);
-  if (execAT("AT+SAPBR=1,1", "OK", 8000)) {
-    gprsOnline = true;
+  // Try APN 2: portalnmms (BSNL Tamil Nadu)
+  sendGSM("AT+SAPBR=3,1,\"APN\",\"portalnmms\"", "OK", 2000);
+  if (sendGSM("AT+SAPBR=1,1", "OK", 8000)) {
+    sendGSM("AT+SAPBR=2,1", "OK", 2000);
+    gprsReady = true;
     digitalWrite(LED_PIN, HIGH);
+    Serial.println(F("[GSM] GPRS ONLINE (APN: portalnmms)\n"));
     return true;
   }
 
-  // Try APN 3: www (Generic BSNL GPRS)
-  execAT("AT+SAPBR=3,1,\"APN\",\"www\"", "OK", 2000);
-  if (execAT("AT+SAPBR=1,1", "OK", 8000)) {
-    gprsOnline = true;
+  // Try APN 3: www (Generic BSNL)
+  sendGSM("AT+SAPBR=3,1,\"APN\",\"www\"", "OK", 2000);
+  if (sendGSM("AT+SAPBR=1,1", "OK", 8000)) {
+    sendGSM("AT+SAPBR=2,1", "OK", 2000);
+    gprsReady = true;
     digitalWrite(LED_PIN, HIGH);
+    Serial.println(F("[GSM] GPRS ONLINE (APN: www)\n"));
     return true;
   }
 
-  gprsOnline = false;
+  Serial.println(F("[GSM] GPRS Connection Failed.\n"));
+  gprsReady = false;
   return false;
 }
 
-// Send HTTP POST over SIM800L
-bool sendGPSUpdate(float curLat, float curLng, float curSpeed, float curHeading, int curSats) {
+// Transmit GPS telemetry HTTP POST to Render Backend
+bool postGPS(float lat, float lng, float speedKmh, float headingDeg, int sats) {
   // Format JSON payload
   String json = String("{\"device_id\":\"") + DEVICE_ID +
                 "\",\"api_key\":\""  + API_KEY + "\"" +
-                ",\"lat\":"          + String(curLat, 6) +
-                ",\"lng\":"          + String(curLng, 6) +
-                ",\"speed_kmh\":"    + String(curSpeed, 1) +
-                ",\"heading\":"      + String(curHeading, 1) +
-                ",\"satellites\":"   + String(curSats) +
+                ",\"lat\":"          + String(lat, 6) +
+                ",\"lng\":"          + String(lng, 6) +
+                ",\"speed_kmh\":"    + String(speedKmh, 1) +
+                ",\"heading\":"      + String(headingDeg, 1) +
+                ",\"satellites\":"   + String(sats) +
                 ",\"fix_quality\":1,\"source\":\"arduino\"}";
 
-  execAT("AT+HTTPTERM", "OK", 1000);
+  Serial.print(F("[TELEMETRY] Sending: ")); Serial.println(json);
+
+  sendGSM("AT+HTTPTERM", "OK", 1000);
   delay(100);
 
-  if (!execAT("AT+HTTPINIT", "OK", 3000)) return false;
-  execAT("AT+HTTPSSL=1", "OK", 1000);
+  if (!sendGSM("AT+HTTPINIT", "OK", 3000)) return false;
+  sendGSM("AT+HTTPSSL=1", "OK", 1000);
   
   String url = String("AT+HTTPPARA=\"URL\",\"") + SERVER_URL + "\"";
-  execAT(url, "OK", 2000);
-  execAT("AT+HTTPPARA=\"CID\",1", "OK", 1000);
-  execAT("AT+HTTPPARA=\"CONTENT\",\"application/json\"", "OK", 1000);
+  sendGSM(url, "OK", 2000);
+  sendGSM("AT+HTTPPARA=\"CID\",1", "OK", 1000);
+  sendGSM("AT+HTTPPARA=\"CONTENT\",\"application/json\"", "OK", 1000);
 
   String dataCmd = String("AT+HTTPDATA=") + json.length() + ",10000";
-  if (execAT(dataCmd, "DOWNLOAD", 3000)) {
-    Serial.println(json);
+  if (sendGSM(dataCmd, "DOWNLOAD", 3000)) {
+    gsmSerial.println(json);
     delay(250);
   } else {
-    execAT("AT+HTTPTERM", "OK", 1000);
+    sendGSM("AT+HTTPTERM", "OK", 1000);
     return false;
   }
 
-  cleanBuffer();
-  Serial.println("AT+HTTPACTION=1");
+  gsmSerial.listen();
+  while (gsmSerial.available()) gsmSerial.read();
+  gsmSerial.println(F("AT+HTTPACTION=1"));
+  
   unsigned long startAction = millis();
   bool success = false;
   while (millis() - startAction < 10000) {
-    if (Serial.available()) {
-      String line = Serial.readString();
+    if (gsmSerial.available()) {
+      String line = gsmSerial.readString();
+      Serial.print(F("[GSM] HTTPACTION: ")); Serial.println(line);
       if (line.indexOf("200") != -1 || line.indexOf("+HTTPACTION: 1,200") != -1) {
         success = true;
         break;
@@ -191,10 +201,10 @@ bool sendGPSUpdate(float curLat, float curLng, float curSpeed, float curHeading,
     }
   }
 
-  execAT("AT+HTTPTERM", "OK", 1000);
+  sendGSM("AT+HTTPTERM", "OK", 1000);
 
-  // Flash LED on successful live telemetry transmission
   if (success) {
+    Serial.println(F("[OK] Live Telemetry Delivered to Cloud Successfully!\n"));
     digitalWrite(LED_PIN, LOW);
     delay(100);
     digitalWrite(LED_PIN, HIGH);
@@ -207,18 +217,25 @@ void setup() {
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, LOW);
 
-  // Hardware Serial (Pins 0 & 1) for SIM800L
+  // USB Serial Monitor Debug Output (Pins 0 & 1 free!)
   Serial.begin(9600);
+  Serial.println(F("=========================================="));
+  Serial.println(F("TN 108 AMBULANCE — HARDWARE FIRMWARE (PLAN 3)"));
+  Serial.println(F("SIM800L: Pins 4 & 5 | GPS: Pins 8 & 9"));
+  Serial.println(F("=========================================="));
 
-  // SoftwareSerial (Pins 8 & 9) for NEO-6M GPS
+  // SIM800L Serial (Pins 4 & 5)
+  gsmSerial.begin(9600);
+
+  // NEO-6M GPS Serial (Pins 8 & 9)
   gpsSerial.begin(9600);
 
   delay(3000); // Stabilization
-  initBSNLGPRS();
+  initGPRS();
 }
 
 void loop() {
-  // Read real GPS data from NEO-6M module
+  // 1. Read real GPS data from NEO-6M on Pins 8 & 9
   gpsSerial.listen();
   unsigned long scan = millis();
   while (millis() - scan < 1000) {
@@ -227,34 +244,37 @@ void loop() {
     }
   }
 
-  // If GPS has real satellite fix, use real satellites
+  // 2. Determine GPS coordinates
   if (gps.location.isValid()) {
-    lat     = gps.location.lat();
-    lng     = gps.location.lng();
-    speed   = gps.speed.kmph();
-    heading = gps.course.deg();
-    sats    = gps.satellites.value();
+    curLat     = gps.location.lat();
+    curLng     = gps.location.lng();
+    curSpeed   = gps.speed.kmph();
+    curHeading = gps.course.deg();
+    curSats    = gps.satellites.value();
+    Serial.print(F("[GPS FIX] Lat: ")); Serial.print(curLat, 6);
+    Serial.print(F(" | Lng: ")); Serial.print(curLng, 6);
+    Serial.print(F(" | Sats: ")); Serial.println(curSats);
   } else {
     // Indoor smooth simulated route along Chennai corridor
-    lat += (random(-5, 6) * 0.00004);
-    lng += (random(-5, 6) * 0.00004);
-    speed = 30.0 + random(0, 15);
-    heading = (int)(heading + random(-10, 11) + 360) % 360;
+    curLat += (random(-5, 6) * 0.00004);
+    curLng += (random(-5, 6) * 0.00004);
+    curSpeed = 30.0 + random(0, 15);
+    curHeading = (int)(curHeading + random(-10, 11) + 360) % 360;
+    Serial.println(F("[INDOOR NAV] Generating smooth Chennai corridor telemetry..."));
   }
 
-  // Send update every 4 seconds
-  if (millis() - lastSend >= 4000) {
-    lastSend = millis();
+  // 3. Send cellular telemetry update every 4 seconds
+  if (millis() - lastSendTime >= 4000) {
+    lastSendTime = millis();
 
-    if (!gprsOnline) {
-      initBSNLGPRS();
+    if (!gprsReady) {
+      initGPRS();
     }
 
-    if (gprsOnline) {
-      bool ok = sendGPSUpdate(lat, lng, speed, heading, sats);
+    if (gprsReady) {
+      bool ok = postGPS(curLat, curLng, curSpeed, curHeading, curSats);
       if (!ok) {
-        // Retry GPRS attach if dropped
-        initBSNLGPRS();
+        initGPRS(); // Reconnect if dropped
       }
     }
   }

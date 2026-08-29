@@ -68,18 +68,20 @@ bool sendCmd(const char* cmd, const char* expected, unsigned long timeoutMs = 30
 // Connect to BSNL GPRS network
 bool setupGPRS() {
   digitalWrite(LED_PIN, LOW);
+  gprsConnected = false;
   
   // Synchronize baud rate
-  for (int i = 0; i < 5; i++) {
+  for (int i = 0; i < 3; i++) {
     sendCmd("AT", "OK", 1000);
     delay(200);
   }
 
   sendCmd("ATE0", "OK", 1000);        // Echo off
   sendCmd("AT+CFUN=1", "OK", 2000);   // Full phone functionality
+  sendCmd("AT+CPIN?", "READY", 2000); // Check SIM status
+  sendCmd("AT+CSQ", "OK", 1500);      // Check signal strength
 
-  // Wait for network registration (home network or roaming)
-  bool registered = false;
+  // Wait for network registration (home network 1 or roaming 5)
   for (int i = 0; i < 15; i++) {
     flushSerial();
     Serial.println("AT+CREG?");
@@ -87,31 +89,43 @@ bool setupGPRS() {
     String r = "";
     while (Serial.available()) r += (char)Serial.read();
     if (r.indexOf(",1") != -1 || r.indexOf(",5") != -1) {
-      registered = true;
       break;
     }
     delay(1000);
   }
 
-  // Configure GPRS Bearer profile
-  sendCmd("AT+SAPBR=0,1", "OK", 2000); // Close old bearer if any
+  // 1. Attach to GPRS service (Required for BSNL 2G)
+  sendCmd("AT+CGATT=1", "OK", 4000);
+  delay(500);
+
+  // 2. Configure GPRS Bearer profile
+  sendCmd("AT+SAPBR=0,1", "OK", 2000); // Close old bearer if active
   delay(500);
   sendCmd("AT+SAPBR=3,1,\"Contype\",\"GPRS\"", "OK", 2000);
   
-  // Set BSNL APN
+  // Try APN 1: bsnlnet
   String apnCmd = String("AT+SAPBR=3,1,\"APN\",\"") + APN + "\"";
   sendCmd(apnCmd.c_str(), "OK", 2000);
-
-  // Open GPRS context
-  if (sendCmd("AT+SAPBR=1,1", "OK", 10000)) {
+  if (sendCmd("AT+SAPBR=1,1", "OK", 8000)) {
+    sendCmd("AT+SAPBR=2,1", "OK", 2000); // Print assigned IP
     gprsConnected = true;
     digitalWrite(LED_PIN, HIGH);
     return true;
   }
 
-  // Fallback to "www" APN if bsnlnet fails
+  // Try APN 2: portalnmms (BSNL South India)
+  sendCmd("AT+SAPBR=3,1,\"APN\",\"portalnmms\"", "OK", 2000);
+  if (sendCmd("AT+SAPBR=1,1", "OK", 8000)) {
+    sendCmd("AT+SAPBR=2,1", "OK", 2000);
+    gprsConnected = true;
+    digitalWrite(LED_PIN, HIGH);
+    return true;
+  }
+
+  // Try APN 3: www (Generic BSNL)
   sendCmd("AT+SAPBR=3,1,\"APN\",\"www\"", "OK", 2000);
-  if (sendCmd("AT+SAPBR=1,1", "OK", 10000)) {
+  if (sendCmd("AT+SAPBR=1,1", "OK", 8000)) {
+    sendCmd("AT+SAPBR=2,1", "OK", 2000);
     gprsConnected = true;
     digitalWrite(LED_PIN, HIGH);
     return true;

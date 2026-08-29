@@ -1,4 +1,4 @@
-require('dotenv').config();
+// redeploy trigger
 // Trigger redeploy after CORS fix
 const express  = require('express');
 const http     = require('http');
@@ -44,14 +44,8 @@ global.io = io;
 
 // ── Middleware ─────────────────────────────────────────────────────────────
 app.use(cors({ origin: ORIGINS, credentials: true }));
-app.use((err, _req, res, _next) => {
-  if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
-    console.error('Bad JSON payload:', err);
-    return res.status(400).json({ error: 'Invalid JSON payload' });
-  }
-  // pass other errors to the generic handler
-  return res.status(500).json({ error: 'Internal server error', detail: err.message });
-});
+app.use(express.json({ limit: '1mb' }));
+
 app.use(express.urlencoded({ extended: true }));
 
 // ── Logging ────────────────────────────────────────────────────────────────

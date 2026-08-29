@@ -84,20 +84,27 @@ let lastHeartbeat = 0;
 
 const DEBUG = args['debug'] !== undefined || args['verbose'] !== undefined;
 
-function processSentence(line) {
-  line = line.trim();
-  if (!line.startsWith('$')) return;
-  sentenceCount++;
-  if (DEBUG) console.log('  [raw-nmea]', line);
-  if (!validateChecksum(line)) { console.warn('  [warn] checksum fail:', line); return; }
-  const parts = line.split('*')[0].split(',');
-  const type  = parts[0];
-  if (type === '$GPGGA' || type === '$GNGGA') {
-    const p = parseGGA(parts);
-    latestGGA = p;
-  } else if (type === '$GPRMC' || type === '$GNRMC') {
-    const p = parseRMC(parts);
-    latestRMC = p;
+function processSentence(rawLine) {
+  rawLine = rawLine.trim();
+  if (!rawLine.includes('$')) return;
+  
+  // Split multiple sentences if concatenated
+  const sentences = rawLine.split('$').filter(Boolean).map(s => '$' + s);
+  for (let line of sentences) {
+    sentenceCount++;
+    if (DEBUG) console.log('  [raw-nmea]', line);
+    if (!validateChecksum(line)) {
+      continue;
+    }
+    const parts = line.split('*')[0].split(',');
+    const type  = parts[0];
+    if (type === '$GPGGA' || type === '$GNGGA') {
+      const p = parseGGA(parts);
+      latestGGA = p;
+    } else if (type === '$GPRMC' || type === '$GNRMC') {
+      const p = parseRMC(parts);
+      latestRMC = p;
+    }
   }
 
   // Periodic heartbeat every 3 seconds if waiting for fix
@@ -107,7 +114,7 @@ function processSentence(line) {
     const hasFix = (latestGGA.lat && latestGGA.lng) || (latestRMC.lat && latestRMC.lng);
     if (!hasFix) {
       const sats = latestGGA.satellites || 0;
-      process.stdout.write(`\r  [gps-status] Receiving NMEA data... Satellites locked: ${sats} (Searching for fix, point antenna towards open sky)   `);
+      console.log(`  [gps-status] Receiving NEO-6M data... Satellites locked: ${sats} (Waiting for satellite fix)`);
     }
   }
 }

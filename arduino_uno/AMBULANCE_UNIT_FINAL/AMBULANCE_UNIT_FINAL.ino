@@ -31,19 +31,8 @@ void setup() {
 }
 
 void loop() {
-  // Read and forward real NMEA characters from NEO-6M GPS to PC USB
+  // Transparently forward all pristine NMEA characters from NEO-6M GPS to PC USB
   while (gpsSerial.available()) {
-    char c = gpsSerial.read();
-    gps.encode(c);
-    Serial.write(c);
-  }
-
-  // Periodic heartbeat every 2 seconds if GPS antenna is searching indoors
-  if (millis() - lastTick >= 2000) {
-    lastTick = millis();
-    if (!gps.location.isValid()) {
-      Serial.println(F("$GPGGA,120000.00,1304.9620,N,08016.2420,E,1,08,1.0,12.0,M,-87.0,M,,*69"));
-      Serial.println(F("$GPRMC,120000.00,A,1304.9620,N,08016.2420,E,35.0,45.0,290826,,,A*42"));
-    }
+    Serial.write(gpsSerial.read());
   }
 }

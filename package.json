@@ -10,6 +10,7 @@
     "bridge:sim": "npm --prefix backend run bridge:sim",
     "bridge:all": "npm --prefix backend run bridge:all",
     "start": "node backend/index.js",
+    "build": "npm --prefix frontend install && npm --prefix frontend run build",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {

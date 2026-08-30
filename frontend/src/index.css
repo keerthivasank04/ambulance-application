@@ -903,3 +903,48 @@ tbody tr:hover { background: var(--surface-2); }
   display: flex; align-items: center; justify-content: center; color: var(--tn-navy);
 }
 .map-recenter-btn:hover { background: var(--surface-2); }
+
+/* ── Leaflet Dark Mode & Controls Polish ── */
+[data-theme="dark"] .leaflet-popup-content-wrapper {
+  background: #111827;
+  color: #E8F0FE;
+  border: 1px solid rgba(255,255,255,0.12);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.6);
+}
+[data-theme="dark"] .leaflet-popup-tip {
+  background: #111827;
+}
+[data-theme="dark"] .leaflet-container {
+  background: #0f172a;
+}
+[data-theme="dark"] .leaflet-tile {
+  filter: brightness(0.88) invert(1) contrast(3) hue-rotate(200deg) saturate(0.3) brightness(0.7);
+}
+
+/* ── Mobile Map & HUD Responsive Adjustments ── */
+@media (max-width: 900px) {
+  .fleet-map-grid, div[style*="gridTemplateColumns: minmax(0, 1fr) 360px"] {
+    grid-template-columns: 1fr !important;
+  }
+  .map-panel {
+    min-height: 400px !important;
+  }
+}
+
+@media (max-width: 600px) {
+  .tracking-banner {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.75rem;
+  }
+  .map-live-pill {
+    top: auto;
+    bottom: 12px;
+    right: 12px;
+    font-size: 0.75rem;
+    padding: 0.3rem 0.65rem;
+  }
+  .map-panel {
+    min-height: 360px !important;
+  }
+}

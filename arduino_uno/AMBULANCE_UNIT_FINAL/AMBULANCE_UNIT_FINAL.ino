@@ -85,8 +85,9 @@ bool initGPRS() {
     sendAT("AT", "OK", 800);
     delay(150);
   }
-
   sendAT("ATE0", "OK", 1000);        // Echo off
+  delay(500);
+  sendAT("AT+CMEE=2", "OK", 1000);   // Enable Verbose Text Error Messages
   delay(500);
   sendAT("AT+CFUN=1", "OK", 3000);   // Enable Full Phone Functionality / RF Radio
   delay(1000);
@@ -129,31 +130,29 @@ bool initGPRS() {
     delay(1200);
   }
 
-
   if (!registered) {
     Serial.println(F("[GSM] Registration taking time. Retrying search..."));
     return false;
   }
 
+  // Reset IP stack and existing bearers cleanly
+  sendAT("AT+CIPSHUT", "SHUT OK", 3000);
+  sendAT("AT+SAPBR=0,1", "OK", 2000);
+  delay(500);
+
   // Attach GPRS packet service
   sendAT("AT+CGATT=1", "OK", 4000);
   delay(1000);
 
-  // Set PDP context definition for BSNL
-  sendAT("AT+CGDCONT=1,\"IP\",\"bsnlnet\"", "OK", 2000);
-  delay(500);
-
-  // Set GPRS context
+  // Set GPRS context parameter
   sendAT("AT+SAPBR=3,1,\"Contype\",\"GPRS\"", "OK", 2000);
   delay(300);
 
-  // Try APN 1: bsnlnet
+  // Configure APN: bsnlnet
   sendAT("AT+SAPBR=3,1,\"APN\",\"bsnlnet\"", "OK", 2000);
   delay(300);
-  sendAT("AT+SAPBR=3,1,\"USER\",\"\"", "OK", 1000);
-  sendAT("AT+SAPBR=3,1,\"PWD\",\"\"", "OK", 1000);
   
-  Serial.println(F("[GSM] Opening GPRS Bearer with BSNL (Waiting up to 30s for IP)..."));
+  Serial.println(F("[GSM] Opening GPRS Bearer with BSNL..."));
   if (sendAT("AT+SAPBR=1,1", "OK", 30000)) {
     delay(500);
     gsm->listen();

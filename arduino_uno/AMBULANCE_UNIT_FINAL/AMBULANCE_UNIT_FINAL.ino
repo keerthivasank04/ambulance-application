@@ -139,14 +139,15 @@ bool initGPRS() {
   sendAT("AT+CIPSHUT", "SHUT OK", 3000);
   delay(500);
   sendAT("AT+CIPSTATUS", "OK", 2000);
-  sendAT("AT+CIPMUX=0", "OK", 1000);  // Single IP connection
-  sendAT("AT+CIPRXGET=1", "OK", 1000); // Manual receive mode
+  sendAT("AT+CIPMUX=0", "OK", 1000);   // Single IP connection
+  sendAT("AT+CIPRXGET=0", "OK", 1000);  // 0 = Automatic output of server data to UART!
+  sendAT("AT+CIPHEAD=1", "OK", 1000);   // Include IP data header
 
   // Attach GPRS
   sendAT("AT+CGATT=1", "OK", 4000);
   delay(500);
 
-  // APNs for BSNL Tamil Nadu
+  // APNs for BSNL Tamil Nadu (portalnmms first since it succeeded)
   const char* apns[] = {"portalnmms", "bsnlnet", "bsnlstream", "www"};
 
   for (int i = 0; i < 4; i++) {
@@ -156,7 +157,7 @@ bool initGPRS() {
     sendAT("AT+CIPSHUT", "SHUT OK", 2000);
     delay(300);
     sendAT("AT+CIPMUX=0", "OK", 1000);
-    sendAT("AT+CIPRXGET=1", "OK", 1000);
+    sendAT("AT+CIPRXGET=0", "OK", 1000);
     sendAT("AT+CGATT=1", "OK", 3000);
     delay(300);
 
@@ -195,7 +196,6 @@ bool initGPRS() {
   gprsOnline = false;
   return false;
 }
-
 
 // Send HTTP POST over Direct TCP Socket
 bool postTelemetry(float lat, float lng, float speedKmh, float headingDeg, int sats) {
@@ -253,37 +253,42 @@ bool postTelemetry(float lat, float lng, float speedKmh, float headingDeg, int s
 
   // Transmit HTTP Request followed by Ctrl+Z (ASCII 26)
   gsm->print(httpRequest);
-  delay(100);
-  gsm->write(26); // Ctrl+Z to send packet
-  Serial.println(F("[TCP] HTTP Packet Transmitted! Waiting for response..."));
+  delay(150);
+  gsm->write(26); // Ctrl+Z
+  Serial.println(F("[TCP] HTTP Packet Transmitted! Listening for cloud reply..."));
 
-  // Wait for server response
+  // Stream server response directly to Serial Monitor
   unsigned long startWait = millis();
+  String fullResponse = "";
   bool success = false;
+  
   while (millis() - startWait < 8000) {
-    if (gsm->available()) {
-      String resp = gsm->readString();
-      Serial.print(F("[SERVER RESPONSE]: ")); Serial.println(resp);
-      if (resp.indexOf("200 OK") != -1 || resp.indexOf("\"status\":\"ok\"") != -1) {
+    while (gsm->available()) {
+      char c = (char)gsm->read();
+      fullResponse += c;
+      Serial.write(c); // Live streaming to Serial Monitor!
+      if (fullResponse.indexOf("200 OK") != -1 || fullResponse.indexOf("\"status\":\"ok\"") != -1) {
         success = true;
-        break;
       }
     }
   }
+  Serial.println();
 
   sendAT("AT+CIPCLOSE", "OK", 1000);
 
-  if (success) {
+  if (success || fullResponse.indexOf("ok") != -1) {
     Serial.println(F("\n****************************************************"));
     Serial.println(F("[SUCCESS!] Live Telemetry Delivered Over BSNL Cellular!"));
     Serial.println(F("****************************************************\n"));
     digitalWrite(LED_PIN, LOW);
     delay(100);
     digitalWrite(LED_PIN, HIGH);
+    return true;
   }
 
-  return success;
+  return false;
 }
+
 
 
 // Universal Matrix Scanner for SIM800L

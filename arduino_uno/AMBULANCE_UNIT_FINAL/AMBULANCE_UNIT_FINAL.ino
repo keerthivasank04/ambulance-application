@@ -73,8 +73,7 @@ bool sendAT(const String& cmd, const char* expected, unsigned long timeout = 300
   Serial.print(F("[GSM] << TIMEOUT: ")); Serial.println(resp);
   return false;
 }
-
-// Connect to BSNL 2G GPRS
+// Connect to BSNL 2G GPRS using direct TCP/IP Stack
 bool initGPRS() {
   digitalWrite(LED_PIN, LOW);
   gprsOnline = false;
@@ -85,11 +84,12 @@ bool initGPRS() {
     sendAT("AT", "OK", 800);
     delay(150);
   }
+
   sendAT("ATE0", "OK", 1000);        // Echo off
   delay(500);
-  sendAT("AT+CMEE=2", "OK", 1000);   // Enable Verbose Text Error Messages
+  sendAT("AT+CMEE=2", "OK", 1000);   // Verbose errors
   delay(500);
-  sendAT("AT+CFUN=1", "OK", 3000);   // Enable Full Phone Functionality / RF Radio
+  sendAT("AT+CFUN=1", "OK", 3000);   // Enable Radio
   delay(1000);
 
   // Check SIM Card Status
@@ -108,7 +108,7 @@ bool initGPRS() {
   while (gsm->available()) csqResp += (char)gsm->read();
   Serial.print(F("[SIGNAL] CSQ: ")); Serial.println(csqResp);
 
-  // Set Automatic Operator Search
+  // Auto-Select Operator (BSNL)
   sendAT("AT+COPS=0", "OK", 3000);
 
   // Wait for network registration (1 = home, 5 = roaming)
@@ -135,138 +135,107 @@ bool initGPRS() {
     return false;
   }
 
-  // Reset IP stack and existing bearers cleanly
+  // Direct TCP/IP Stack Setup (Lowest Power, Most Reliable on 2G)
   sendAT("AT+CIPSHUT", "SHUT OK", 3000);
-  sendAT("AT+SAPBR=0,1", "OK", 2000);
+  delay(500);
+  sendAT("AT+CIPSTATUS", "OK", 2000);
+  sendAT("AT+CIPMUX=0", "OK", 1000);  // Single IP connection
+  sendAT("AT+CIPRXGET=1", "OK", 1000); // Manual receive mode
+
+  // Attach GPRS
+  sendAT("AT+CGATT=1", "OK", 4000);
   delay(500);
 
-  // Attach GPRS packet service
-  sendAT("AT+CGATT=1", "OK", 4000);
-  delay(1000);
+  // Set APN to bsnlnet
+  sendAT("AT+CSTT=\"bsnlnet\",\"\",\"\"", "OK", 3000);
+  delay(500);
 
-  // Set GPRS context parameter
-  sendAT("AT+SAPBR=3,1,\"Contype\",\"GPRS\"", "OK", 2000);
-  delay(300);
-
-  // Configure APN: bsnlnet
-  sendAT("AT+SAPBR=3,1,\"APN\",\"bsnlnet\"", "OK", 2000);
-  delay(300);
-  
-  Serial.println(F("[GSM] Opening GPRS Bearer with BSNL..."));
-  if (sendAT("AT+SAPBR=1,1", "OK", 30000)) {
+  // Bring up Wireless Connection (CIICR)
+  Serial.println(F("[GSM] Bringing up BSNL Wireless GPRS (AT+CIICR)..."));
+  if (sendAT("AT+CIICR", "OK", 15000)) {
     delay(500);
+    
+    // Get Local IP Address (CIFSR)
     gsm->listen();
     while (gsm->available()) gsm->read();
-    gsm->println(F("AT+SAPBR=2,1"));
+    gsm->println(F("AT+CIFSR"));
     delay(1000);
     String ipResp = "";
     while (gsm->available()) ipResp += (char)gsm->read();
-    Serial.print(F("[GSM IP ALLOCATED]: ")); Serial.println(ipResp);
+    Serial.print(F("[BSNL IP ALLOCATED]: ")); Serial.println(ipResp);
 
-    gprsOnline = true;
-    digitalWrite(LED_PIN, HIGH);
-    Serial.println(F("[GSM] GPRS ONLINE (APN: bsnlnet)!\n"));
-    return true;
+    if (ipResp.indexOf(".") != -1 && ipResp.indexOf("ERROR") == -1) {
+      gprsOnline = true;
+      digitalWrite(LED_PIN, HIGH);
+      Serial.println(F("[GSM] GPRS ONLINE (Direct TCP/IP Stack Active)!\n"));
+      return true;
+    }
   }
 
-  // Check if bearer was already opened
-  gsm->listen();
-  while (gsm->available()) gsm->read();
-  gsm->println(F("AT+SAPBR=2,1"));
-  delay(1000);
-  String ipCheck = "";
-  while (gsm->available()) ipCheck += (char)gsm->read();
-  if (ipCheck.indexOf("1,1") != -1) {
-    Serial.print(F("[GSM IP ACTIVE]: ")); Serial.println(ipCheck);
-    gprsOnline = true;
-    digitalWrite(LED_PIN, HIGH);
-    Serial.println(F("[GSM] GPRS ONLINE (Already Active)!\n"));
-    return true;
-  }
-
-  // Try APN 2: portalnmms (BSNL Tamil Nadu South Zone)
-  sendAT("AT+CGDCONT=1,\"IP\",\"portalnmms\"", "OK", 2000);
-  sendAT("AT+SAPBR=3,1,\"APN\",\"portalnmms\"", "OK", 2000);
-  if (sendAT("AT+SAPBR=1,1", "OK", 30000)) {
-    sendAT("AT+SAPBR=2,1", "OK", 2000);
-    gprsOnline = true;
-    digitalWrite(LED_PIN, HIGH);
-    Serial.println(F("[GSM] GPRS ONLINE (APN: portalnmms)!\n"));
-    return true;
-  }
-
-  // Try APN 3: www (Generic BSNL)
-  sendAT("AT+CGDCONT=1,\"IP\",\"www\"", "OK", 2000);
-  sendAT("AT+SAPBR=3,1,\"APN\",\"www\"", "OK", 2000);
-  if (sendAT("AT+SAPBR=1,1", "OK", 30000)) {
-    sendAT("AT+SAPBR=2,1", "OK", 2000);
-    gprsOnline = true;
-    digitalWrite(LED_PIN, HIGH);
-    Serial.println(F("[GSM] GPRS ONLINE (APN: www)!\n"));
-    return true;
-  }
-
-
-
-  Serial.println(F("[GSM] GPRS Connection Failed.\n"));
+  Serial.println(F("[GSM] Direct GPRS Connection Failed.\n"));
   gprsOnline = false;
   return false;
 }
 
-// Send HTTP POST over SIM800L cellular internet
+// Send HTTP POST over Direct TCP Socket
 bool postTelemetry(float lat, float lng, float speedKmh, float headingDeg, int sats) {
-  String json = String("{\"device_id\":\"") + DEVICE_ID +
-                "\",\"api_key\":\""  + API_KEY + "\"" +
-                ",\"lat\":"          + String(lat, 6) +
-                ",\"lng\":"          + String(lng, 6) +
-                ",\"speed_kmh\":"    + String(speedKmh, 1) +
-                ",\"heading\":"      + String(headingDeg, 1) +
-                ",\"satellites\":"   + String(sats) +
-                ",\"fix_quality\":1,\"source\":\"arduino\"}";
+  String payload = String("{\"device_id\":\"") + DEVICE_ID +
+                   "\",\"api_key\":\""  + API_KEY + "\"" +
+                   ",\"lat\":"          + String(lat, 6) +
+                   ",\"lng\":"          + String(lng, 6) +
+                   ",\"speed_kmh\":"    + String(speedKmh, 1) +
+                   ",\"heading\":"      + String(headingDeg, 1) +
+                   ",\"satellites\":"   + String(sats) +
+                   ",\"fix_quality\":1,\"source\":\"arduino\"}";
 
-  Serial.print(F("[CELLULAR POST] Sending: ")); Serial.println(json);
+  String httpRequest = String("POST /api/gps-update HTTP/1.1\r\n") +
+                       "Host: tn-ambulance-backend.onrender.com\r\n" +
+                       "Content-Type: application/json\r\n" +
+                       "Content-Length: " + payload.length() + "\r\n" +
+                       "Connection: close\r\n\r\n" +
+                       payload;
 
-  sendAT("AT+HTTPTERM", "OK", 1000);
-  delay(100);
+  Serial.print(F("[CELLULAR POST] Sending: ")); Serial.println(payload);
 
-  if (!sendAT("AT+HTTPINIT", "OK", 3000)) return false;
-  sendAT("AT+HTTPSSL=1", "OK", 1000);
+  // Close any existing connection
+  sendAT("AT+CIPCLOSE", "OK", 1000);
+  delay(200);
 
-  String url = String("AT+HTTPPARA=\"URL\",\"") + SERVER_URL + "\"";
-  sendAT(url, "OK", 2000);
-  sendAT("AT+HTTPPARA=\"CID\",1", "OK", 1000);
-  sendAT("AT+HTTPPARA=\"CONTENT\",\"application/json\"", "OK", 1000);
-
-  String dataCmd = String("AT+HTTPDATA=") + json.length() + ",10000";
-  if (sendAT(dataCmd, "DOWNLOAD", 3000)) {
-    gsm->println(json);
-    delay(250);
-  } else {
-    sendAT("AT+HTTPTERM", "OK", 1000);
+  // Connect to backend via TCP Port 80
+  Serial.println(F("[TCP] Connecting to tn-ambulance-backend.onrender.com:80..."));
+  if (!sendAT("AT+CIPSTART=\"TCP\",\"tn-ambulance-backend.onrender.com\",\"80\"", "CONNECT OK", 10000)) {
+    Serial.println(F("[TCP] Connection Failed."));
     return false;
   }
 
-  gsm->listen();
-  while (gsm->available()) gsm->read();
-  gsm->println(F("AT+HTTPACTION=1"));
+  // Send HTTP Data
+  String sendCmd = String("AT+CIPSEND=") + httpRequest.length();
+  if (sendAT(sendCmd, ">", 3000)) {
+    gsm->print(httpRequest);
+    Serial.println(F("[TCP] Payload Transmitted. Waiting for 200 OK..."));
+  } else {
+    sendAT("AT+CIPCLOSE", "OK", 1000);
+    return false;
+  }
 
-  unsigned long startAction = millis();
+  // Wait for server response
+  unsigned long startWait = millis();
   bool success = false;
-  while (millis() - startAction < 10000) {
+  while (millis() - startWait < 8000) {
     if (gsm->available()) {
-      String line = gsm->readString();
-      Serial.print(F("[GSM] HTTPACTION: ")); Serial.println(line);
-      if (line.indexOf("200") != -1 || line.indexOf("+HTTPACTION: 1,200") != -1) {
+      String resp = gsm->readString();
+      Serial.print(F("[SERVER]: ")); Serial.println(resp);
+      if (resp.indexOf("200 OK") != -1 || resp.indexOf("\"status\":\"ok\"") != -1) {
         success = true;
         break;
       }
     }
   }
 
-  sendAT("AT+HTTPTERM", "OK", 1000);
+  sendAT("AT+CIPCLOSE", "OK", 1000);
 
   if (success) {
-    Serial.println(F("[OK] Telemetry Delivered via Cellular GPRS Successfully!\n"));
+    Serial.println(F("[OK] Telemetry Delivered via BSNL Cellular Successfully!\n"));
     digitalWrite(LED_PIN, LOW);
     delay(100);
     digitalWrite(LED_PIN, HIGH);

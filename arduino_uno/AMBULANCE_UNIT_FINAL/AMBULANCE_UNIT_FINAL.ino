@@ -291,28 +291,39 @@ void setup() {
 
   // USB Serial Monitor
   Serial.begin(9600);
-  Serial.println(F("=========================================="));
+  delay(1000);
+  
+  Serial.println(F("\n=========================================="));
   Serial.println(F("TN 108 AMBULANCE — STANDALONE SIM800L GPRS"));
   Serial.println(F("=========================================="));
-
+  
   gpsSerial.begin(9600);
+  
+  // 3-second countdown so user sees everything on Serial Monitor
+  Serial.println(F("Starting in 3 seconds..."));
+  delay(1000);
+  Serial.println(F("Starting in 2 seconds..."));
+  delay(1000);
+  Serial.println(F("Starting in 1 second..."));
+  delay(1000);
 
   // Run Matrix Scanner
-  if (!scanAndLockSIM800L()) {
-    Serial.println(F("[WARNING] Auto-scan ended. Defaulting to RX=5, TX=4 at 9600."));
-    gsm = &gsmSerialB;
-    gsmSerialB.begin(9600);
-  }
-
+  scanAndLockSIM800L();
+  
   delay(1000);
   initGPRS();
 }
 
-
-
-
 void loop() {
-  // 1. Read real GPS data from NEO-6M on Pins 8 & 9
+  // 1. If GPRS is not online, re-scan and initialize
+  if (!gprsOnline) {
+    scanAndLockSIM800L();
+    initGPRS();
+    delay(2000);
+    return;
+  }
+
+  // 2. Read real GPS data from NEO-6M on Pins 8 & 9
   gpsSerial.listen();
   unsigned long scan = millis();
   while (millis() - scan < 1000) {
@@ -321,7 +332,7 @@ void loop() {
     }
   }
 
-  // 2. Check if GPS has live satellite fix
+  // 3. Check if GPS has live satellite fix
   if (gps.location.isValid()) {
     curLat     = gps.location.lat();
     curLng     = gps.location.lng();
@@ -340,21 +351,15 @@ void loop() {
     Serial.println(F("[INDOOR NAV] Navigating Chennai route..."));
   }
 
-  // 3. Send cellular update every 4 seconds
+  // 4. Send cellular update every 4 seconds
   if (millis() - lastSend >= 4000) {
     lastSend = millis();
-
-    if (!gprsOnline) {
-      initGPRS();
-    }
-
-    if (gprsOnline) {
-      bool ok = postTelemetry(curLat, curLng, curSpeed, curHeading, curSats);
-      if (!ok) {
-        initGPRS(); // Reconnect if dropped
-      }
+    bool ok = postTelemetry(curLat, curLng, curSpeed, curHeading, curSats);
+    if (!ok) {
+      gprsOnline = false; // Trigger re-scan if connection drops
     }
   }
 }
+
 
 

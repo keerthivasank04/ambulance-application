@@ -68,10 +68,20 @@ const getBearingName = (deg) => {
   return dirs[idx];
 };
 
+const DEFAULT_STATS = {
+  requests: { total: 0, completed: 0, active: 0, cancelled: 0 },
+  ambulances: { available: 0, assigned: 0, maintenance: 0, total: 0, arduino_active: 0, sim_active: 0 },
+  drivers: { online: 0, on_duty: 0 },
+  hospitals: { total: 0 },
+  avg_response_time_min: null,
+  by_type: [],
+  recent_requests: [],
+};
+
 export default function AdminDashboard() {
   const [tab, setTab]                 = useState(0);
-  const [ambulances, setAmb]          = useState(null);
-  const [stats, setStats]             = useState(null);
+  const [ambulances, setAmb]          = useState([]);
+  const [stats, setStats]             = useState(DEFAULT_STATS);
   const [signals, setSignals]         = useState([]);
   const [wsConnected, setWsConnected] = useState(false);
   const [selectedAmbId, setSelectedAmbId] = useState(null);
@@ -81,6 +91,7 @@ export default function AdminDashboard() {
   const [coordsCopied, setCoordsCopied] = useState(false);
   const mapRef = useRef(null);
   const { addToast } = useToast();
+
 
   const statsFetcher = useCallback(() => fetchAdminStats(), []);
   const ambFetcher   = useCallback(() => fetchLiveAmbulances(), []);

@@ -14,10 +14,13 @@ import DriverApp from './pages/DriverApp';
 
 function RequireAdmin({ children }) {
   let token = null;
-  try { token = localStorage.getItem('admin_token'); } catch { /* storage unavailable */ }
+  try {
+    token = sessionStorage.getItem('admin_token') || localStorage.getItem('admin_token');
+  } catch { /* storage unavailable */ }
   if (!token) return <Navigate to="/admin/login" replace />;
   return children;
 }
+
 
 // Browsers can restore a page from the back/forward cache (bfcache) as a
 // frozen snapshot — no React re-render, no auth re-check — so a signed-out

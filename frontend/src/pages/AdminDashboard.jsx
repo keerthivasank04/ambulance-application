@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { MapContainer, TileLayer, Marker, Popup, Tooltip, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import { usePolling } from '../hooks/usePolling';
@@ -6,6 +7,7 @@ import { ambulanceIcon, signalMarkerIcon as signalIcon } from '../utils/mapIcons
 import { fetchAdminStats, fetchLiveAmbulances, fetchSignals } from '../services/api';
 import { getSocket, joinAdminRoom } from '../services/socket';
 import { useToast } from '../context/ToastContext';
+
 
 // Frames the map to show every marker once, on the first render after data
 // arrives — not on every subsequent GPS update, so the view doesn't jump
@@ -210,6 +212,16 @@ export default function AdminDashboard() {
     return true;
   });
 
+  const navigate = useNavigate();
+
+  const handleSignOut = () => {
+    try {
+      sessionStorage.removeItem('admin_token');
+      localStorage.removeItem('admin_token');
+    } catch { /* storage unavailable */ }
+    navigate('/admin/login', { replace: true });
+  };
+
   return (
     <div style={{ background: 'var(--bg)', minHeight: 'calc(100vh - 95px)' }}>
 
@@ -223,13 +235,23 @@ export default function AdminDashboard() {
             Live vehicle telematics · Traffic signal green corridors · Emergency dispatch
           </p>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem' }}>
-          <span className={`dot ${wsConnected ? 'dot-green dot-pulse' : 'dot-amber'}`} />
-          <span style={{ fontSize: '0.8rem', fontWeight: 700, color: wsConnected ? '#86EFAC' : '#FCD34D' }}>
-            {wsConnected ? 'Live Satellite Feeds Active' : 'Reconnecting...'}
-          </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.875rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <span className={`dot ${wsConnected ? 'dot-green dot-pulse' : 'dot-amber'}`} />
+            <span style={{ fontSize: '0.8rem', fontWeight: 700, color: wsConnected ? '#86EFAC' : '#FCD34D' }}>
+              {wsConnected ? 'Live Feeds Active' : 'Reconnecting...'}
+            </span>
+          </div>
+          <button
+            onClick={handleSignOut}
+            className="btn btn-sm btn-ghost"
+            style={{ color: 'var(--tn-red)', borderColor: 'rgba(200,16,46,0.3)', padding: '0.25rem 0.75rem' }}
+          >
+            Sign Out
+          </button>
         </div>
       </div>
+
 
       <div className="container" style={{ padding: '1.25rem 1.5rem' }}>
 

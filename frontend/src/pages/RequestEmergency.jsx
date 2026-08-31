@@ -36,12 +36,12 @@ function MapClickPicker({ onPick }) {
   return null;
 }
 
-// Mirrors the backend's CHENNAI_BOUNDS check (requests.js) so an out-of-area
-// pick is caught immediately instead of only failing at final submission.
-const CHENNAI_BOUNDS = { minLat: 12.75, maxLat: 13.30, minLng: 79.95, maxLng: 80.35 };
-const isWithinChennai = (lat, lng) =>
-  lat >= CHENNAI_BOUNDS.minLat && lat <= CHENNAI_BOUNDS.maxLat &&
-  lng >= CHENNAI_BOUNDS.minLng && lng <= CHENNAI_BOUNDS.maxLng;
+// Service bounds covering all Tamil Nadu districts
+const TN_BOUNDS = { minLat: 8.0, maxLat: 14.5, minLng: 76.0, maxLng: 81.5 };
+const isWithinServiceArea = (lat, lng) =>
+  lat >= TN_BOUNDS.minLat && lat <= TN_BOUNDS.maxLat &&
+  lng >= TN_BOUNDS.minLng && lng <= TN_BOUNDS.maxLng;
+
 
 export default function RequestEmergency() {
   const navigate = useNavigate();
@@ -117,11 +117,21 @@ export default function RequestEmergency() {
     setMapPickPoint(null);
   };
 
+  const handleNextStep = () => {
+    setError('');
+    if (step === 1) {
+      if (!coords) return setError('Please detect or choose your location on the map first.');
+      if (!isWithinServiceArea(coords.lat, coords.lng)) return setError('Please choose a location within Tamil Nadu service region.');
+      return setStep(2);
+    }
+    setStep(step + 1);
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (loading) return;
     if (!coords) return setError('Please set a location before submitting.');
-    if (!isWithinChennai(coords.lat, coords.lng)) return setError('This service currently operates only within Chennai. Please choose a location inside the city.');
+    if (!isWithinServiceArea(coords.lat, coords.lng)) return setError('This service currently operates only within Tamil Nadu.');
     setLoading(true);
     setError('');
     const fd = new FormData(e.target);
@@ -199,10 +209,10 @@ export default function RequestEmergency() {
                 Use your current GPS location, search for an address, or drop a pin on the map — whichever is fastest.
               </p>
 
-              {coords && !isWithinChennai(coords.lat, coords.lng) ? (
+              {coords && !isWithinServiceArea(coords.lat, coords.lng) ? (
                 <div className="location-status pending has-error">
                   <div style={{ color: '#991B1B', fontSize: '0.875rem', marginBottom: '0.875rem' }}>
-                    This location is outside Chennai. This service currently operates only within Chennai city and its immediate suburbs — please call <strong>108</strong> directly if you're elsewhere.
+                    This location is outside the Tamil Nadu emergency response network — please call <strong>108</strong> directly for immediate manual dispatch.
                   </div>
                   <button type="button" onClick={resetLocation} className="btn btn-primary btn-full">
                     Choose a Different Location
@@ -308,11 +318,12 @@ export default function RequestEmergency() {
                 </>
               )}
 
-              {coords && isWithinChennai(coords.lat, coords.lng) && (
+              {coords && isWithinServiceArea(coords.lat, coords.lng) && (
                 <button type="button" onClick={() => setStep(2)} data-testid="step1-continue" className="btn btn-danger btn-full btn-lg" style={{ marginTop: '1.25rem' }}>
                   Continue →
                 </button>
               )}
+
             </div>
           </div>
 

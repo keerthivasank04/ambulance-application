@@ -21,7 +21,14 @@ const STATUS_LABELS = {
 };
 
 export default function DriverApp() {
-  const [driver, setDriver]   = useState(null);
+  const [driver, setDriver]   = useState(() => {
+    try {
+      const saved = sessionStorage.getItem('driver_session');
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  });
   const [phone, setPhone]     = useState('');
   const [pwd, setPwd]         = useState('');
   const [err, setErr]         = useState('');
@@ -36,6 +43,9 @@ export default function DriverApp() {
     try {
       const res = await driverLogin(phone, pwd);
       setDriver(res.driver);
+      try {
+        sessionStorage.setItem('driver_session', JSON.stringify(res.driver));
+      } catch { /* storage unavailable */ }
     } catch (e) {
       setErr(e.message);
     } finally {
@@ -47,7 +57,11 @@ export default function DriverApp() {
     const next = driver.status === 'online' ? 'offline' : 'online';
     try {
       await toggleDriverStatus(driver.id, next);
-      setDriver(d => ({ ...d, status: next }));
+      const updated = { ...driver, status: next };
+      setDriver(updated);
+      try {
+        sessionStorage.setItem('driver_session', JSON.stringify(updated));
+      } catch { /* storage unavailable */ }
       addToast(next === 'online' ? 'green' : 'blue',
         next === 'online' ? 'You are now Online' : 'You are now Offline',
         'Availability updated');
@@ -57,8 +71,12 @@ export default function DriverApp() {
   };
 
   const handleLogout = () => {
+    try {
+      sessionStorage.removeItem('driver_session');
+    } catch { /* storage unavailable */ }
     setDriver(null); setPhone(''); setPwd('');
   };
+
 
   const isPolling = driver && (driver.status === 'online' || driver.status === 'on_duty');
   const fetcher   = useCallback(() => fetchDriverAssignment(driver?.id), [driver?.id]);

@@ -56,7 +56,7 @@ export default function Navbar() {
   const [fontScale, setFontScale] = useFontScale();
   const [menuOpen, setMenuOpen] = useState(false);
   const [wsConnected, setWsConnected] = useState(false);
-  const isAdmin = !!localStorage.getItem('admin_token');
+  const isAdmin = !!(sessionStorage.getItem('admin_token') || localStorage.getItem('admin_token'));
   const onAdmin = pathname.startsWith('/admin') && pathname !== '/admin/login';
 
   useEffect(() => {
@@ -72,10 +72,14 @@ export default function Navbar() {
   const isActive = (to) => to !== '/' && pathname.startsWith(to);
 
   const signOut = () => {
-    localStorage.removeItem('admin_token');
-    navigate('/admin/login');
+    try {
+      sessionStorage.removeItem('admin_token');
+      localStorage.removeItem('admin_token');
+    } catch { /* storage unavailable */ }
+    navigate('/admin/login', { replace: true });
     setMenuOpen(false);
   };
+
 
   return (
     <header className="navbar">

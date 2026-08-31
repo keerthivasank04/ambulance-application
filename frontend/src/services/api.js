@@ -1,8 +1,23 @@
 const API_URL = import.meta.env.VITE_API_URL || 'https://tn-ambulance-backend.onrender.com/api';
 
 function adminHeaders() {
-  const token = localStorage.getItem('admin_token');
+  let token = null;
+  try {
+    token = sessionStorage.getItem('admin_token') || localStorage.getItem('admin_token');
+  } catch { /* storage unavailable */ }
   return { 'Content-Type': 'application/json', ...(token ? { 'x-admin-token': token } : {}) };
+}
+
+function handleAuthError(res) {
+  if (res.status === 401) {
+    try {
+      sessionStorage.removeItem('admin_token');
+      localStorage.removeItem('admin_token');
+    } catch { /* storage unavailable */ }
+    if (window.location.pathname.startsWith('/admin') && window.location.pathname !== '/admin/login') {
+      window.location.href = '/admin/login';
+    }
+  }
 }
 
 // ── Emergency requests ────────────────────────────────────────────────────
@@ -45,15 +60,22 @@ export const adminLogin = async (username, password) => {
 
 export const fetchAdminStats = async () => {
   const res = await fetch(`${API_URL}/admin/stats`, { headers: adminHeaders() });
-  if (!res.ok) throw new Error('Failed to load stats');
+  if (!res.ok) {
+    handleAuthError(res);
+    throw new Error('Failed to load stats');
+  }
   return res.json();
 };
 
 export const fetchLiveAmbulances = async () => {
   const res = await fetch(`${API_URL}/admin/ambulances/live`, { headers: adminHeaders() });
-  if (!res.ok) throw new Error('Failed to load ambulances');
+  if (!res.ok) {
+    handleAuthError(res);
+    throw new Error('Failed to load ambulances');
+  }
   return res.json();
 };
+
 
 // ── Driver ────────────────────────────────────────────────────────────────
 

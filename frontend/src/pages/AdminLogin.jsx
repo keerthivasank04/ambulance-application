@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { adminLogin } from '../services/api';
 
@@ -10,6 +10,12 @@ export default function AdminLogin() {
   const [loading, setLoading]   = useState(false);
   const [showPwd, setShowPwd]   = useState(false);
 
+  // When visiting the login page, clear any stale session/token immediately
+  useEffect(() => {
+    localStorage.removeItem('admin_token');
+    sessionStorage.removeItem('admin_token');
+  }, []);
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (loading) return;
@@ -17,8 +23,9 @@ export default function AdminLogin() {
     setLoading(true);
     try {
       const { token } = await adminLogin(username, password);
+      sessionStorage.setItem('admin_token', token);
       localStorage.setItem('admin_token', token);
-      navigate('/admin');
+      navigate('/admin', { replace: true });
     } catch (err) {
       setError(err.message);
     } finally {

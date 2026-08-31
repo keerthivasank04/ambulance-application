@@ -21,20 +21,24 @@ const STATUS_LABELS = {
 };
 
 export default function DriverApp() {
-  const [driver, setDriver]   = useState(() => {
-    try {
-      const saved = sessionStorage.getItem('driver_session');
-      return saved ? JSON.parse(saved) : null;
-    } catch {
-      return null;
-    }
-  });
+  const [driver, setDriver]   = useState(null);
   const [phone, setPhone]     = useState('');
   const [pwd, setPwd]         = useState('');
   const [err, setErr]         = useState('');
   const [loading, setLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
   const { addToast } = useToast();
+
+  // Clear session on mount, back button, or refresh
+  useEffect(() => {
+    const handlePopState = () => {
+      setDriver(null);
+      setPhone('');
+      setPwd('');
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -43,9 +47,6 @@ export default function DriverApp() {
     try {
       const res = await driverLogin(phone, pwd);
       setDriver(res.driver);
-      try {
-        sessionStorage.setItem('driver_session', JSON.stringify(res.driver));
-      } catch { /* storage unavailable */ }
     } catch (e) {
       setErr(e.message);
     } finally {
@@ -57,11 +58,7 @@ export default function DriverApp() {
     const next = driver.status === 'online' ? 'offline' : 'online';
     try {
       await toggleDriverStatus(driver.id, next);
-      const updated = { ...driver, status: next };
-      setDriver(updated);
-      try {
-        sessionStorage.setItem('driver_session', JSON.stringify(updated));
-      } catch { /* storage unavailable */ }
+      setDriver(d => ({ ...d, status: next }));
       addToast(next === 'online' ? 'green' : 'blue',
         next === 'online' ? 'You are now Online' : 'You are now Offline',
         'Availability updated');
@@ -71,17 +68,16 @@ export default function DriverApp() {
   };
 
   const handleLogout = () => {
-    try {
-      sessionStorage.removeItem('driver_session');
-    } catch { /* storage unavailable */ }
-    setDriver(null); setPhone(''); setPwd('');
+    setDriver(null);
+    setPhone('');
+    setPwd('');
   };
-
 
   const isPolling = driver && (driver.status === 'online' || driver.status === 'on_duty');
   const fetcher   = useCallback(() => fetchDriverAssignment(driver?.id), [driver?.id]);
   const { data }  = usePolling(fetcher, 3000, isPolling);
   const req       = data?.assignment;
+
 
   // Socket listener for instant assignment notification
   useEffect(() => {

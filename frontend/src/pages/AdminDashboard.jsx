@@ -93,6 +93,42 @@ export default function AdminDashboard() {
   const { addToast } = useToast();
 
 
+  const navigate = useNavigate();
+
+  // Strict Ephemeral Session: Refreshing or pressing Back button logs out immediately
+  useEffect(() => {
+    // 1. If page was reloaded/refreshed, immediately destroy token and return to login
+    try {
+      const nav = performance.getEntriesByType('navigation')[0];
+      if (nav && nav.type === 'reload') {
+        sessionStorage.removeItem('admin_token');
+        localStorage.removeItem('admin_token');
+        navigate('/admin/login', { replace: true });
+        return;
+      }
+    } catch { /* performance API not supported */ }
+
+    // 2. If user presses browser Back button, log out and redirect to login
+    const onPopState = () => {
+      sessionStorage.removeItem('admin_token');
+      localStorage.removeItem('admin_token');
+      navigate('/admin/login', { replace: true });
+    };
+
+    // 3. When page is about to refresh/unload, destroy token
+    const onUnload = () => {
+      sessionStorage.removeItem('admin_token');
+      localStorage.removeItem('admin_token');
+    };
+
+    window.addEventListener('popstate', onPopState);
+    window.addEventListener('beforeunload', onUnload);
+    return () => {
+      window.removeEventListener('popstate', onPopState);
+      window.removeEventListener('beforeunload', onUnload);
+    };
+  }, [navigate]);
+
   const statsFetcher = useCallback(() => fetchAdminStats(), []);
   const ambFetcher   = useCallback(() => fetchLiveAmbulances(), []);
   const { data: statsData } = usePolling(statsFetcher, 8000);
@@ -100,6 +136,7 @@ export default function AdminDashboard() {
 
   useEffect(() => { if (statsData)  setStats(statsData); }, [statsData]);
   useEffect(() => { if (ambData)    setAmb(ambData); }, [ambData]);
+
 
   useEffect(() => {
     const load = () => fetchSignals().then(setSignals).catch(() => {});
@@ -223,8 +260,6 @@ export default function AdminDashboard() {
     return true;
   });
 
-  const navigate = useNavigate();
-
   const handleSignOut = () => {
     try {
       sessionStorage.removeItem('admin_token');
@@ -232,6 +267,7 @@ export default function AdminDashboard() {
     } catch { /* storage unavailable */ }
     navigate('/admin/login', { replace: true });
   };
+
 
   return (
     <div style={{ background: 'var(--bg)', minHeight: 'calc(100vh - 95px)' }}>

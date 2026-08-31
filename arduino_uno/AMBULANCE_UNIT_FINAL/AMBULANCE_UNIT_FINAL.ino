@@ -33,4 +33,6 @@ void loop() {
   // Forward all live NMEA satellite bytes directly to PC USB bridge
   while (gpsSerial.available()) {
     Serial.write(gpsSerial.read());
+  }
 }
+

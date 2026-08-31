@@ -137,19 +137,23 @@ bool initGPRS() {
 
   // Attach GPRS packet service
   sendAT("AT+CGATT=1", "OK", 4000);
-  delay(500);
+  delay(1000);
 
-  // Close previous bearer if open
-  sendAT("AT+SAPBR=0,1", "OK", 2000);
-  delay(300);
+  // Set PDP context definition for BSNL
+  sendAT("AT+CGDCONT=1,\"IP\",\"bsnlnet\"", "OK", 2000);
+  delay(500);
 
   // Set GPRS context
   sendAT("AT+SAPBR=3,1,\"Contype\",\"GPRS\"", "OK", 2000);
+  delay(300);
 
   // Try APN 1: bsnlnet
-  String apn1 = String("AT+SAPBR=3,1,\"APN\",\"") + BSNL_APN + "\"";
-  sendAT(apn1, "OK", 2000);
-  if (sendAT("AT+SAPBR=1,1", "OK", 8000)) {
+  sendAT("AT+SAPBR=3,1,\"APN\",\"bsnlnet\"", "OK", 2000);
+  delay(300);
+  sendAT("AT+SAPBR=3,1,\"USER\",\"\"", "OK", 1000);
+  sendAT("AT+SAPBR=3,1,\"PWD\",\"\"", "OK", 1000);
+  
+  if (sendAT("AT+SAPBR=1,1", "OK", 10000)) {
     sendAT("AT+SAPBR=2,1", "OK", 2000);
     gprsOnline = true;
     digitalWrite(LED_PIN, HIGH);
@@ -157,9 +161,10 @@ bool initGPRS() {
     return true;
   }
 
-  // Try APN 2: portalnmms (BSNL Tamil Nadu)
+  // Try APN 2: portalnmms (BSNL Tamil Nadu South Zone)
+  sendAT("AT+CGDCONT=1,\"IP\",\"portalnmms\"", "OK", 2000);
   sendAT("AT+SAPBR=3,1,\"APN\",\"portalnmms\"", "OK", 2000);
-  if (sendAT("AT+SAPBR=1,1", "OK", 8000)) {
+  if (sendAT("AT+SAPBR=1,1", "OK", 10000)) {
     sendAT("AT+SAPBR=2,1", "OK", 2000);
     gprsOnline = true;
     digitalWrite(LED_PIN, HIGH);
@@ -168,14 +173,16 @@ bool initGPRS() {
   }
 
   // Try APN 3: www (Generic BSNL)
+  sendAT("AT+CGDCONT=1,\"IP\",\"www\"", "OK", 2000);
   sendAT("AT+SAPBR=3,1,\"APN\",\"www\"", "OK", 2000);
-  if (sendAT("AT+SAPBR=1,1", "OK", 8000)) {
+  if (sendAT("AT+SAPBR=1,1", "OK", 10000)) {
     sendAT("AT+SAPBR=2,1", "OK", 2000);
     gprsOnline = true;
     digitalWrite(LED_PIN, HIGH);
     Serial.println(F("[GSM] GPRS ONLINE (APN: www)!\n"));
     return true;
   }
+
 
   Serial.println(F("[GSM] GPRS Connection Failed.\n"));
   gprsOnline = false;

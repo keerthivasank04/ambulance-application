@@ -215,119 +215,132 @@ bool initGPRS() {
 
 // Send HTTP POST using SIM800L built-in HTTP client (handles HTTPS/TLS properly)
 bool postTelemetry(float lat, float lng, float speedKmh, float headingDeg, int sats) {
-  String payload = String("{\"device_id\":\"") + DEVICE_ID +
-                   "\",\"api_key\":\""  + API_KEY + "\"" +
-                   ",\"lat\":"          + String(lat, 6) +
-                   ",\"lng\":"          + String(lng, 6) +
-                   ",\"speed_kmh\":"    + String(speedKmh, 1) +
-                   ",\"heading\":"      + String(headingDeg, 1) +
-                   ",\"satellites\":"   + String(sats) +
-                   ",\"fix_quality\":1,\"source\":\"arduino\"}";
+  // ─── Build payload in static char buffer (saves SRAM vs String) ──────────
+  static char payload[200];
+  static char numBuf[12];
 
-  Serial.print(F("[CELLULAR POST] Sending: ")); Serial.println(payload);
+  strcpy(payload, "{\"device_id\":\"");
+  strcat(payload, DEVICE_ID);
+  strcat(payload, "\",\"api_key\":\"");
+  strcat(payload, API_KEY);
+  strcat(payload, "\",\"lat\":");
+  dtostrf(lat, 1, 6, numBuf);  strcat(payload, numBuf);
+  strcat(payload, ",\"lng\":");
+  dtostrf(lng, 1, 6, numBuf);  strcat(payload, numBuf);
+  strcat(payload, ",\"speed_kmh\":");
+  dtostrf(speedKmh, 1, 1, numBuf);  strcat(payload, numBuf);
+  strcat(payload, ",\"heading\":");
+  dtostrf(headingDeg, 1, 1, numBuf);  strcat(payload, numBuf);
+  strcat(payload, ",\"satellites\":");
+  itoa(sats, numBuf, 10);  strcat(payload, numBuf);
+  strcat(payload, ",\"fix_quality\":1,\"source\":\"arduino\"}");
 
-  // ─── 1. Open Bearer (SAPBR) ───────────────────────────────────────────────
-  sendAT("AT+SAPBR=3,1,\"Contype\",\"GPRS\"", "OK", 2000);
-  sendAT("AT+SAPBR=3,1,\"APN\",\"portalnmms\"", "OK", 2000);
-  sendAT("AT+SAPBR=3,1,\"USER\",\"\"", "OK", 1000);
-  sendAT("AT+SAPBR=3,1,\"PWD\",\"\"", "OK", 1000);
-  sendAT("AT+SAPBR=1,1", "OK", 8000);   // Open bearer (may already be open)
-  delay(500);
+  uint16_t payLen = strlen(payload);
+  Serial.print(F("[POST] payload(")); Serial.print(payLen); Serial.print(F("): "));
+  Serial.println(payload);
 
-  // ─── 2. Init HTTP stack ───────────────────────────────────────────────────
-  sendATSafe("AT+HTTPTERM");    // Ignore error — expected if no prior session
+  // ─── 1. Release direct TCP stack before opening SAPBR bearer ─────────────
+  sendATSafe("AT+CIPSHUT");   // Close CIICR if open — SAPBR and CIICR cannot coexist
   delay(300);
 
-  if (!sendAT("AT+HTTPINIT", "OK", 3000)) {
-    Serial.println(F("[HTTP] HTTPINIT failed!"));
-    sendAT("AT+SAPBR=0,1", "OK", 2000);
-    return false;
-  }
-
-  sendAT("AT+HTTPPARA=\"CID\",1", "OK", 1000);
-  sendAT("AT+HTTPPARA=\"URL\",\"https://tn-ambulance-backend.onrender.com/api/gps-update\"", "OK", 2000);
-  sendAT("AT+HTTPPARA=\"CONTENT\",\"application/json\"", "OK", 1000);
-  sendAT("AT+HTTPPARA=\"USERDATA\",\"Connection: close\"", "OK", 1000);
-  sendAT("AT+HTTPSSL=1", "OK", 2000);  // Enable HTTPS
-
-  // ─── 3. Load POST body ───────────────────────────────────────────────────
-  // Use sendAT with "DOWNLOAD" as expected — SIM800L responds with "DOWNLOAD\r\n" prompt
-  String dataCmd = String("AT+HTTPDATA=") + payload.length() + ",10000";
-  if (!sendAT(dataCmd, "DOWNLOAD", 6000)) {
-    Serial.println(F("[HTTP] HTTPDATA prompt failed! Retrying once..."));
-    delay(500);
-    if (!sendAT(dataCmd, "DOWNLOAD", 6000)) {
-      Serial.println(F("[HTTP] HTTPDATA failed twice. Aborting."));
-      sendATSafe("AT+HTTPTERM");
-      sendAT("AT+SAPBR=0,1", "OK", 2000);
+  // ─── 2. Configure & open SAPBR bearer ────────────────────────────────────
+  sendAT(F("AT+SAPBR=3,1,\"Contype\",\"GPRS\""), "OK", 2000);
+  sendAT(F("AT+SAPBR=3,1,\"APN\",\"portalnmms\""), "OK", 2000);
+  sendAT(F("AT+SAPBR=3,1,\"USER\",\"\""), "OK", 1000);
+  sendAT(F("AT+SAPBR=3,1,\"PWD\",\"\""), "OK", 1000);
+  if (!sendAT(F("AT+SAPBR=1,1"), "OK", 10000)) {
+    // Bearer may already be open — check its status
+    if (!sendAT(F("AT+SAPBR=2,1"), "1,1", 3000)) {
+      Serial.println(F("[HTTP] Bearer open failed!"));
+      gprsOnline = false;
       return false;
     }
   }
+  delay(300);
 
-  // Immediately write the payload bytes after DOWNLOAD prompt
+  // ─── 3. Init HTTP stack ───────────────────────────────────────────────────
+  sendATSafe("AT+HTTPTERM");  // Clear any leftover session
+  delay(200);
+  if (!sendAT(F("AT+HTTPINIT"), "OK", 3000)) {
+    Serial.println(F("[HTTP] HTTPINIT failed!"));
+    return false;
+  }
+  sendAT(F("AT+HTTPPARA=\"CID\",1"), "OK", 1000);
+  sendAT(F("AT+HTTPPARA=\"URL\",\"https://tn-ambulance-backend.onrender.com/api/gps-update\""), "OK", 2000);
+  sendAT(F("AT+HTTPPARA=\"CONTENT\",\"application/json\""), "OK", 1000);
+  sendAT(F("AT+HTTPSSL=1"), "OK", 2000);
+
+  // ─── 4. Load POST body ────────────────────────────────────────────────────
+  static char dataCmdBuf[30];
+  strcpy(dataCmdBuf, "AT+HTTPDATA=");
+  itoa(payLen, numBuf, 10);
+  strcat(dataCmdBuf, numBuf);
+  strcat(dataCmdBuf, ",10000");
+
+  Serial.print(F("[HTTP] Sending: ")); Serial.println(dataCmdBuf);
+
+  if (!sendAT(dataCmdBuf, "DOWNLOAD", 6000)) {
+    Serial.println(F("[HTTP] HTTPDATA DOWNLOAD prompt failed!"));
+    sendATSafe("AT+HTTPTERM");
+    return false;
+  }
+
+  // Immediately write raw payload bytes
   delay(50);
   gsm->listen();
-  gsm->print(payload);
-  delay(600);  // Wait for SIM800L to absorb all bytes and return OK
-  // Drain the "OK" response
-  { String ack = ""; unsigned long t2 = millis();
-    while (millis() - t2 < 2000) { while (gsm->available()) ack += (char)gsm->read(); }
-    Serial.print(F("[HTTP] Data ack: ")); Serial.println(ack);
+  gsm->write((const uint8_t*)payload, payLen);
+  delay(800);
+  // Drain the SIM800L "OK" after data absorbed
+  { unsigned long t2 = millis();
+    while (millis() - t2 < 2000) { while (gsm->available()) { char c = (char)gsm->read(); Serial.write(c); } }
+    Serial.println();
   }
   Serial.println(F("[HTTP] Payload loaded. Executing POST..."));
 
-  // ─── 4. Execute POST ──────────────────────────────────────────────────────
+  // ─── 5. Execute POST ──────────────────────────────────────────────────────
   gsm->listen();
   while (gsm->available()) gsm->read();
   gsm->println(F("AT+HTTPACTION=1"));
   Serial.println(F("[HTTP] >> AT+HTTPACTION=1 (POST)"));
 
-  // Wait for +HTTPACTION response (may take up to 15 sec over 2G)
+  // Wait up to 20 sec for +HTTPACTION response over 2G
   unsigned long actionStart = millis();
-  String actionResp = "";
-  bool success = false;
-  while (millis() - actionStart < 15000) {
-    while (gsm->available()) {
+  static char actionBuf[60];
+  memset(actionBuf, 0, sizeof(actionBuf));
+  uint8_t ai = 0;
+  while (millis() - actionStart < 20000) {
+    while (gsm->available() && ai < 59) {
       char c = (char)gsm->read();
-      actionResp += c;
+      actionBuf[ai++] = c;
       Serial.write(c);
     }
-    if (actionResp.indexOf("+HTTPACTION") != -1) break;
+    if (strstr(actionBuf, "+HTTPACTION") != NULL) break;
   }
   Serial.println();
 
-  // +HTTPACTION: 1,200,<bytes>  → 200 = success
-  if (actionResp.indexOf(",200,") != -1) {
-    success = true;
-  }
+  bool success = (strstr(actionBuf, ",200,") != NULL);
 
-  // ─── 5. Read response body ────────────────────────────────────────────────
+  // ─── 6. Read & print response body ───────────────────────────────────────
   if (success) {
     gsm->println(F("AT+HTTPREAD"));
     delay(1000);
-    String body = "";
-    while (gsm->available()) {
-      char c = (char)gsm->read();
-      body += c;
-      Serial.write(c);
-    }
+    while (gsm->available()) { Serial.write((char)gsm->read()); }
     Serial.println();
     Serial.println(F("\n****************************************************"));
     Serial.println(F("[SUCCESS!] Live Telemetry Delivered Over BSNL Cellular!"));
     Serial.println(F("****************************************************\n"));
-    digitalWrite(LED_PIN, LOW);
-    delay(100);
-    digitalWrite(LED_PIN, HIGH);
+    digitalWrite(LED_PIN, LOW); delay(100); digitalWrite(LED_PIN, HIGH);
   } else {
-    Serial.print(F("[HTTP] Server response: ")); Serial.println(actionResp);
+    Serial.print(F("[HTTP] Response: ")); Serial.println(actionBuf);
   }
 
-  // ─── 6. Cleanup ──────────────────────────────────────────────────────────
+  // ─── 7. Cleanup ──────────────────────────────────────────────────────────
   sendATSafe("AT+HTTPTERM");
-  // Keep bearer open for next cycle (don't close SAPBR)
+  // Keep SAPBR bearer open between cycles
 
   return success;
 }
+
 
 
 

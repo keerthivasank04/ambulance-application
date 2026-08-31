@@ -87,13 +87,18 @@ bool initGPRS() {
   }
 
   sendAT("ATE0", "OK", 1000);        // Echo off
+  delay(500);
+  sendAT("AT+CFUN=1", "OK", 3000);   // Enable Full Phone Functionality / RF Radio
   delay(1000);
   sendAT("AT+CPIN?", "READY", 3000); // Check SIM status
+  delay(500);
+  sendAT("AT+COPS=0", "OK", 3000);   // Auto-select network operator (BSNL)
   sendAT("AT+CSQ", "OK", 1500);      // Signal strength
 
   // Wait for network registration (1 = home, 5 = roaming)
   Serial.println(F("[GSM] Waiting for BSNL cell tower registration..."));
-  for (int i = 0; i < 15; i++) {
+  bool registered = false;
+  for (int i = 0; i < 20; i++) {
     gsm->listen();
     while (gsm->available()) gsm->read();
     gsm->println(F("AT+CREG?"));
@@ -103,18 +108,24 @@ bool initGPRS() {
     Serial.print(F("[GSM] CREG: ")); Serial.println(r);
     if (r.indexOf(",1") != -1 || r.indexOf(",5") != -1) {
       Serial.println(F("[GSM] Registered on BSNL Network!"));
+      registered = true;
       break;
     }
     delay(1000);
   }
 
+  if (!registered) {
+    Serial.println(F("[GSM] Registration taking time. Retrying search..."));
+    return false;
+  }
+
   // Attach GPRS packet service
   sendAT("AT+CGATT=1", "OK", 4000);
-  delay(300);
+  delay(500);
 
   // Close previous bearer if open
   sendAT("AT+SAPBR=0,1", "OK", 2000);
-  delay(200);
+  delay(300);
 
   // Set GPRS context
   sendAT("AT+SAPBR=3,1,\"Contype\",\"GPRS\"", "OK", 2000);

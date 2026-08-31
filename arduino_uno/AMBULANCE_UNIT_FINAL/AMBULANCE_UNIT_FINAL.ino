@@ -217,37 +217,44 @@ bool postTelemetry(float lat, float lng, float speedKmh, float headingDeg, int s
   return success;
 }
 
-// Force SIM800L to permanently lock to 9600 baud on both pin options
-void forceBaudLock() {
-  long bauds[] = {115200, 9600, 57600, 38400, 19200, 4800};
+// Standard SIMCOM Autobaud sync (sends AT\r\n repeatedly to sync internal clock)
+bool syncSIM800L(SoftwareSerial &port, const char* name) {
+  port.begin(9600);
+  port.listen();
+  delay(200);
   
-  Serial.println(F("[BAUD SYNC] Locking SIM800L to 9600 baud..."));
-  for (int p = 0; p < 2; p++) {
-    SoftwareSerial &port = (p == 0) ? gsmSerialB : gsmSerialA;
-    const char* pinDesc = (p == 0) ? "Pins (RX=5, TX=4)" : "Pins (RX=4, TX=5)";
+  Serial.print(F("[SYNC] Testing ")); Serial.print(name); Serial.println(F(" at 9600 baud..."));
+  
+  for (int attempt = 1; attempt <= 8; attempt++) {
+    // Flush buffer
+    while (port.available()) port.read();
     
-    for (int i = 0; i < 6; i++) {
-      port.begin(bauds[i]);
-      port.listen();
-      delay(100);
-      
-      // Flush
-      while (port.available()) port.read();
-      
-      // Send AT+IPR=9600 and AT&W
-      port.println(F("AT"));
-      delay(150);
-      port.println(F("AT+IPR=9600"));
+    // Send AT with standard CRLF
+    port.print("AT\r\n");
+    delay(350);
+    
+    String resp = "";
+    while (port.available()) {
+      char c = (char)port.read();
+      resp += c;
+    }
+    
+    Serial.print(F("  Attempt ")); Serial.print(attempt);
+    Serial.print(F(" -> \"")); Serial.print(resp); Serial.println(F("\""));
+    
+    if (resp.indexOf("OK") != -1 || resp.indexOf("AT") != -1) {
+      Serial.println(F("[SUCCESS] SIM800L locked to 9600 baud!"));
+      // Permanently write to non-volatile memory
+      port.print("AT+IPR=9600\r\n");
       delay(200);
-      port.println(F("AT&W"));
+      port.print("ATE0\r\n");
       delay(200);
+      port.print("AT&W\r\n");
+      delay(200);
+      return true;
     }
   }
-  
-  // Now lock both ports to 9600
-  gsmSerialA.begin(9600);
-  gsmSerialB.begin(9600);
-  delay(500);
+  return false;
 }
 
 void setup() {
@@ -262,54 +269,24 @@ void setup() {
 
   gpsSerial.begin(9600);
 
-  // 1. Force SIM800L to 9600 baud permanently
-  forceBaudLock();
-
-  // 2. Identify which pin orientation returns clean "OK" at 9600
-  bool found = false;
-  
-  // Try Orientation B (RX=5, TX=4)
-  gsmSerialB.listen();
-  while (gsmSerialB.available()) gsmSerialB.read();
-  for (int i = 0; i < 4; i++) {
-    gsmSerialB.println(F("AT"));
-    delay(400);
-    String resp = "";
-    while (gsmSerialB.available()) resp += (char)gsmSerialB.read();
-    if (resp.indexOf("OK") != -1) {
-      Serial.println(F("[PIN DETECT] SIM800L Active on Pins RX=5, TX=4 (OK verified)!"));
-      gsm = &gsmSerialB;
-      found = true;
-      break;
-    }
-  }
-
-  // If not B, try Orientation A (RX=4, TX=5)
-  if (!found) {
-    gsmSerialA.listen();
-    while (gsmSerialA.available()) gsmSerialA.read();
-    for (int i = 0; i < 4; i++) {
-      gsmSerialA.println(F("AT"));
-      delay(400);
-      String resp = "";
-      while (gsmSerialA.available()) resp += (char)gsmSerialA.read();
-      if (resp.indexOf("OK") != -1) {
-        Serial.println(F("[PIN DETECT] SIM800L Active on Pins RX=4, TX=5 (OK verified)!"));
-        gsm = &gsmSerialA;
-        found = true;
-        break;
-      }
-    }
-  }
-
-  if (!found) {
-    Serial.println(F("[PIN DETECT] Using default Pins RX=5, TX=4 at 9600."));
+  // 1. Try Pin Orientation B: RX=Pin 5, TX=Pin 4
+  if (syncSIM800L(gsmSerialB, "Pins (RX=5, TX=4)")) {
+    gsm = &gsmSerialB;
+  } 
+  // 2. If not B, Try Pin Orientation A: RX=Pin 4, TX=Pin 5
+  else if (syncSIM800L(gsmSerialA, "Pins (RX=4, TX=5)")) {
+    gsm = &gsmSerialA;
+  } 
+  // 3. Fallback
+  else {
+    Serial.println(F("[WARNING] Could not sync with SIM800L. Defaulting to RX=5, TX=4."));
     gsm = &gsmSerialB;
   }
 
   delay(1000);
   initGPRS();
 }
+
 
 
 void loop() {

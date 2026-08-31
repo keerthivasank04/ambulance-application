@@ -210,10 +210,58 @@ uint16_t buildPublish(const char* payload) {
   return ri;
 }
 
+bool mqttConnected = false;
+
 // ── GPS Telemetry via MQTT ────────────────────────────────────────────────────
 bool postTelemetry(float lat, float lng, float spd, float hdg, int sats) {
-  // Build JSON payload in gBuf
   char nb[14];
+
+  // ── 1. Ensure TCP & MQTT Connected ─────────────────────────────────────────
+  if (!mqttConnected) {
+    sendATSafe(F("AT+CIPCLOSE"));
+    delay(200);
+
+    char cs[60];
+    strcpy(cs, "AT+CIPSTART=\"TCP\",\"" MQTT_HOST "\",\"1883\"");
+    strcpy(gBuf, cs);
+    Serial.println(F("[TCP] Connecting to broker.hivemq.com:1883..."));
+    if (!sendATBuf("CONNECT OK", 12000)) {
+      Serial.println(F("[TCP] Connect failed!"));
+      return false;
+    }
+    Serial.println(F("[TCP] Connected!"));
+    delay(300);
+
+    // Send MQTT CONNECT
+    uint16_t cLen = buildConnect();
+    strcpy(gBuf, "AT+CIPSEND=");
+    itoa(cLen, gBuf + strlen(gBuf), 10);
+    if (!sendATBuf(">", 3000)) {
+      Serial.println(F("[MQTT] No > for CONNECT"));
+      sendATSafe(F("AT+CIPCLOSE"));
+      return false;
+    }
+    gsm.write(pktBuf, cLen);
+    delay(500);
+
+    // Wait for CONNACK (0x20)
+    bool connack = false;
+    unsigned long t = millis();
+    while (millis() - t < 4000) {
+      if (gsm.available() && (uint8_t)gsm.read() == 0x20) { connack = true; break; }
+    }
+    while (gsm.available()) gsm.read();
+
+    if (!connack) {
+      Serial.println(F("[MQTT] No CONNACK!"));
+      sendATSafe(F("AT+CIPCLOSE"));
+      return false;
+    }
+    mqttConnected = true;
+    Serial.println(F("[MQTT] ✅ Broker accepted CONNECT!"));
+  }
+
+  // ── 2. Build JSON Payload ──────────────────────────────────────────────────
   strcpy(gBuf, "{\"device_id\":\"" DEVICE_ID "\",\"api_key\":\"" API_KEY "\"");
   strcat(gBuf, ",\"lat\":"); dtostrf(lat, 1, 6, nb); strcat(gBuf, nb);
   strcat(gBuf, ",\"lng\":"); dtostrf(lng, 1, 6, nb); strcat(gBuf, nb);
@@ -222,88 +270,60 @@ bool postTelemetry(float lat, float lng, float spd, float hdg, int sats) {
   strcat(gBuf, ",\"satellites\":"); itoa(sats, nb, 10); strcat(gBuf, nb);
   strcat(gBuf, ",\"fix_quality\":1,\"source\":\"arduino\"}");
 
-  Serial.print(F("[MQTT] Payload len=")); Serial.println(strlen(gBuf));
-
-  // ── TCP connect to broker ──────────────────────────────────────────────────
-  sendATSafe(F("AT+CIPCLOSE"));
-  delay(200);
-
-  // Build CIPSTART in a small temp on the stack (safe, only 60 bytes)
-  char cs[60];
-  strcpy(cs, "AT+CIPSTART=\"TCP\",\"" MQTT_HOST "\",\"1883\"");
-  strcpy(gBuf, cs);  // put in gBuf for sendATBuf
-  Serial.println(F("[TCP] Connecting to broker.hivemq.com:1883..."));
-  if (!sendATBuf("CONNECT OK", 12000)) {
-    Serial.println(F("[TCP] Failed!"));
-    return false;
-  }
-  Serial.println(F("[TCP] Connected!"));
-  delay(200);
-
-  // ── MQTT CONNECT ──────────────────────────────────────────────────────────
-  uint16_t cLen = buildConnect();
-
-  // Build AT+CIPSEND=<len> in gBuf
-  strcpy(gBuf, "AT+CIPSEND=");
-  itoa(cLen, gBuf + strlen(gBuf), 10);
-  if (!sendATBuf(">", 3000)) {
-    Serial.println(F("[MQTT] No > for CONNECT"));
-    sendATSafe(F("AT+CIPCLOSE"));
-    return false;
-  }
-  gsm.write(pktBuf, cLen);
-  delay(800);
-
-  // Wait for CONNACK (0x20)
-  bool connack = false;
-  unsigned long t = millis();
-  while (millis() - t < 3000) {
-    if (gsm.available() && (uint8_t)gsm.read() == 0x20) { connack = true; break; }
-  }
-  while (gsm.available()) gsm.read();
-
-  if (!connack) {
-    Serial.println(F("[MQTT] No CONNACK!"));
-    sendATSafe(F("AT+CIPCLOSE"));
-    return false;
-  }
-  Serial.println(F("[MQTT] Broker accepted CONNECT!"));
-
-  // ── MQTT PUBLISH ─────────────────────────────────────────────────────────
-  // Re-build payload (gBuf was overwritten by sendATBuf)
-  char nb2[14];
-  strcpy(gBuf, "{\"device_id\":\"" DEVICE_ID "\",\"api_key\":\"" API_KEY "\"");
-  strcat(gBuf, ",\"lat\":"); dtostrf(lat, 1, 6, nb2); strcat(gBuf, nb2);
-  strcat(gBuf, ",\"lng\":"); dtostrf(lng, 1, 6, nb2); strcat(gBuf, nb2);
-  strcat(gBuf, ",\"speed_kmh\":"); dtostrf(spd, 1, 1, nb2); strcat(gBuf, nb2);
-  strcat(gBuf, ",\"heading\":"); dtostrf(hdg, 1, 1, nb2); strcat(gBuf, nb2);
-  strcat(gBuf, ",\"satellites\":"); itoa(sats, nb2, 10); strcat(gBuf, nb2);
-  strcat(gBuf, ",\"fix_quality\":1,\"source\":\"arduino\"}");
-
   uint16_t pLen = buildPublish(gBuf);
 
-  // Send PUBLISH
+  // ── 3. Send MQTT PUBLISH Packet ───────────────────────────────────────────
   char cs2[22];
   strcpy(cs2, "AT+CIPSEND=");
   itoa(pLen, cs2 + strlen(cs2), 10);
   strcpy(gBuf, cs2);
   if (!sendATBuf(">", 3000)) {
-    Serial.println(F("[MQTT] No > for PUBLISH"));
+    Serial.println(F("[MQTT] Connection lost. Reconnecting..."));
+    mqttConnected = false;
     sendATSafe(F("AT+CIPCLOSE"));
     return false;
   }
-  gsm.write(pktBuf, pLen);
-  delay(500);
-  while (gsm.available()) gsm.read();
-  sendATSafe(F("AT+CIPCLOSE"));
 
-  Serial.println(F("*****************************"));
-  Serial.println(F("[SUCCESS!] MQTT Published!"));
-  Serial.println(F("  Topic: ambulance/ARD-001/gps"));
-  Serial.println(F("*****************************"));
-  digitalWrite(LED_PIN, LOW); delay(100); digitalWrite(LED_PIN, HIGH);
-  return true;
+  // Write binary packet
+  gsm.write(pktBuf, pLen);
+
+  // ── 4. Wait for SEND OK from SIM800L (guarantees packet delivered to cell tower)
+  unsigned long tSend = millis();
+  bool sentOk = false;
+  memset(gBuf, 0, sizeof(gBuf));
+  uint8_t gi = 0;
+  while (millis() - tSend < 6000) {
+    while (gsm.available() && gi < (sizeof(gBuf) - 1)) {
+      char c = (char)gsm.read();
+      gBuf[gi++] = c;
+      Serial.write(c);
+    }
+    if (strstr(gBuf, "SEND OK")) {
+      sentOk = true;
+      break;
+    }
+    if (strstr(gBuf, "CLOSED") || strstr(gBuf, "ERROR")) {
+      mqttConnected = false;
+      break;
+    }
+  }
+  Serial.println();
+
+  if (sentOk) {
+    Serial.println(F("****************************************************"));
+    Serial.println(F("[SUCCESS!] Live GPS Delivered to HiveMQ Broker!"));
+    Serial.println(F("  Topic: ambulance/ARD-001/gps"));
+    Serial.println(F("****************************************************\n"));
+    digitalWrite(LED_PIN, LOW); delay(100); digitalWrite(LED_PIN, HIGH);
+    return true;
+  } else {
+    Serial.println(F("[MQTT] Send not confirmed. Will reconnect next cycle."));
+    mqttConnected = false;
+    sendATSafe(F("AT+CIPCLOSE"));
+    return false;
+  }
 }
+
 
 // ── Setup ─────────────────────────────────────────────────────────────────────
 void setup() {

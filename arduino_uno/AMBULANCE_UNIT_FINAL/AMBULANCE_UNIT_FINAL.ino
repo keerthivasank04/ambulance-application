@@ -217,11 +217,15 @@ bool postTelemetry(float lat, float lng, float speedKmh, float headingDeg, int s
 
   Serial.print(F("[CELLULAR POST] Sending: ")); Serial.println(payload);
 
-  // Connect to backend via TCP Port 80
-  Serial.println(F("[TCP] Connecting to tn-ambulance-backend.onrender.com:80..."));
-  if (!sendAT("AT+CIPSTART=\"TCP\",\"tn-ambulance-backend.onrender.com\",\"80\"", "CONNECT OK", 12000)) {
-    Serial.println(F("[TCP] Connection Failed. Reconnecting GPRS..."));
+  // Enable SSL/TLS for HTTPS (Render backend requires HTTPS on port 443)
+  sendAT("AT+CIPSSL=1", "OK", 2000);
+
+  // Connect to backend via TCP Port 443 (HTTPS)
+  Serial.println(F("[TCP] Connecting to tn-ambulance-backend.onrender.com:443 (HTTPS)..."));
+  if (!sendAT("AT+CIPSTART=\"TCP\",\"tn-ambulance-backend.onrender.com\",\"443\"", "CONNECT OK", 15000)) {
+    Serial.println(F("[TCP] HTTPS Connection Failed. Reconnecting GPRS..."));
     sendAT("AT+CIPCLOSE", "OK", 1000);
+    sendAT("AT+CIPSSL=0", "OK", 1000);
     return false;
   }
 

@@ -217,19 +217,37 @@ bool postTelemetry(float lat, float lng, float speedKmh, float headingDeg, int s
   return success;
 }
 
-// Probe a port for SIM800L
-bool probePort(SoftwareSerial &port, long baud) {
-  port.begin(baud);
-  port.listen();
-  delay(100);
-  while (port.available()) port.read();
-  port.println("AT");
-  delay(600);
-  String r = "";
-  while (port.available()) r += (char)port.read();
-  Serial.print(F("[PROBE] baud=")); Serial.print(baud);
-  Serial.print(F(" -> \"")); Serial.print(r); Serial.println(F("\""));
-  return (r.indexOf("OK") != -1 || r.indexOf("AT") != -1);
+// Force SIM800L to permanently lock to 9600 baud on both pin options
+void forceBaudLock() {
+  long bauds[] = {115200, 9600, 57600, 38400, 19200, 4800};
+  
+  Serial.println(F("[BAUD SYNC] Locking SIM800L to 9600 baud..."));
+  for (int p = 0; p < 2; p++) {
+    SoftwareSerial &port = (p == 0) ? gsmSerialB : gsmSerialA;
+    const char* pinDesc = (p == 0) ? "Pins (RX=5, TX=4)" : "Pins (RX=4, TX=5)";
+    
+    for (int i = 0; i < 6; i++) {
+      port.begin(bauds[i]);
+      port.listen();
+      delay(100);
+      
+      // Flush
+      while (port.available()) port.read();
+      
+      // Send AT+IPR=9600 and AT&W
+      port.println(F("AT"));
+      delay(150);
+      port.println(F("AT+IPR=9600"));
+      delay(200);
+      port.println(F("AT&W"));
+      delay(200);
+    }
+  }
+  
+  // Now lock both ports to 9600
+  gsmSerialA.begin(9600);
+  gsmSerialB.begin(9600);
+  delay(500);
 }
 
 void setup() {
@@ -244,47 +262,55 @@ void setup() {
 
   gpsSerial.begin(9600);
 
-  // Auto-detect pin orientation and baud rate
-  long bauds[] = {9600, 115200, 57600, 38400, 19200, 4800};
+  // 1. Force SIM800L to 9600 baud permanently
+  forceBaudLock();
+
+  // 2. Identify which pin orientation returns clean "OK" at 9600
   bool found = false;
-
-  for (int b = 0; b < 6 && !found; b++) {
-    Serial.print(F("[DETECT] Trying RX=4, TX=5 at ")); Serial.println(bauds[b]);
-    if (probePort(gsmSerialA, bauds[b])) {
-      Serial.println(F("[DETECT] SIM800L Found on RX=4, TX=5!"));
-      gsm = &gsmSerialA;
-      if (bauds[b] != 9600) {
-        gsmSerialA.println("AT+IPR=9600");
-        delay(500);
-        gsmSerialA.begin(9600);
-      }
-      found = true;
-      break;
-    }
-
-    Serial.print(F("[DETECT] Trying RX=5, TX=4 at ")); Serial.println(bauds[b]);
-    if (probePort(gsmSerialB, bauds[b])) {
-      Serial.println(F("[DETECT] SIM800L Found on RX=5, TX=4 (swapped)!"));
+  
+  // Try Orientation B (RX=5, TX=4)
+  gsmSerialB.listen();
+  while (gsmSerialB.available()) gsmSerialB.read();
+  for (int i = 0; i < 4; i++) {
+    gsmSerialB.println(F("AT"));
+    delay(400);
+    String resp = "";
+    while (gsmSerialB.available()) resp += (char)gsmSerialB.read();
+    if (resp.indexOf("OK") != -1) {
+      Serial.println(F("[PIN DETECT] SIM800L Active on Pins RX=5, TX=4 (OK verified)!"));
       gsm = &gsmSerialB;
-      if (bauds[b] != 9600) {
-        gsmSerialB.println("AT+IPR=9600");
-        delay(500);
-        gsmSerialB.begin(9600);
-      }
       found = true;
       break;
     }
   }
 
+  // If not B, try Orientation A (RX=4, TX=5)
   if (!found) {
-    Serial.println(F("[WARNING] SIM800L not responding. Using default RX=5, TX=4 at 9600."));
+    gsmSerialA.listen();
+    while (gsmSerialA.available()) gsmSerialA.read();
+    for (int i = 0; i < 4; i++) {
+      gsmSerialA.println(F("AT"));
+      delay(400);
+      String resp = "";
+      while (gsmSerialA.available()) resp += (char)gsmSerialA.read();
+      if (resp.indexOf("OK") != -1) {
+        Serial.println(F("[PIN DETECT] SIM800L Active on Pins RX=4, TX=5 (OK verified)!"));
+        gsm = &gsmSerialA;
+        found = true;
+        break;
+      }
+    }
+  }
+
+  if (!found) {
+    Serial.println(F("[PIN DETECT] Using default Pins RX=5, TX=4 at 9600."));
     gsm = &gsmSerialB;
-    gsmSerialB.begin(9600);
   }
 
   delay(1000);
   initGPRS();
 }
+
 
 void loop() {
   // 1. Read real GPS data from NEO-6M on Pins 8 & 9

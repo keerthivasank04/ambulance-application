@@ -1,6 +1,12 @@
 /**
  * ============================================================================
  * TN 108 AMBULANCE — STANDALONE BSNL SIM800L GPRS CELLULAR FIRMWARE
+ * TRANSPORT: MQTT over Plain TCP Port 1883 (NO TLS required!)
+ *
+ * WHY MQTT instead of HTTPS:
+ *   SIM800L's SSL library only supports TLS 1.0. Render.com requires TLS 1.2.
+ *   Solution: Publish to HiveMQ public broker via plain TCP port 1883.
+ *   The Render backend subscribes to MQTT and processes GPS data identically.
  *
  * HARDWARE CONNECTIONS:
  *   SIM800L TX  --> Arduino Pin 4 (or Pin 5 - auto-detected)
@@ -14,58 +20,71 @@
  *   NEO-6M GND    --> Arduino GND
  *
  *   Pins 0 & 1 (USB Serial) --> Real-time Debug Monitor (9600 baud)
+ *
+ * MQTT CONFIG:
+ *   Broker : broker.hivemq.com
+ *   Port   : 1883 (plain TCP, NO TLS!)
+ *   Topic  : ambulance/ARD-001/gps
+ *   QoS    : 0
  * ============================================================================
  */
 
 #include <SoftwareSerial.h>
 #include <TinyGPS++.h>
 
-// Server & Telemetry Configuration
+// ── Configuration ─────────────────────────────────────────────────────────────
 const char DEVICE_ID[] = "ARD-001";
 const char API_KEY[]   = "arduino-bridge-secret";
-const char SERVER_URL[]= "https://tn-ambulance-backend.onrender.com/api/gps-update";
-const char BSNL_APN[]  = "bsnlnet";
 
-// SIM800L Serial Ports (Auto-orientation detection)
+// MQTT Broker — plain TCP, no SSL, SIM800L compatible
+const char MQTT_HOST[] = "broker.hivemq.com";
+const int  MQTT_PORT   = 1883;
+char       MQTT_TOPIC[40];   // built at runtime: ambulance/ARD-001/gps
+// Unique MQTT client ID (must be unique per connection)
+char       MQTT_CLIENT_ID[30];
+
+// ── Serial Ports ──────────────────────────────────────────────────────────────
 SoftwareSerial gsmSerialA(4, 5); // RX=4, TX=5
 SoftwareSerial gsmSerialB(5, 4); // RX=5, TX=4
 SoftwareSerial *gsm = &gsmSerialA;
 
-// NEO-6M GPS on Pins 8 & 9
 SoftwareSerial gpsSerial(8, 9);
 TinyGPSPlus gps;
 
+// ── State ─────────────────────────────────────────────────────────────────────
 const int LED_PIN = 13;
 unsigned long lastSend = 0;
 bool gprsOnline = false;
 
-// Real-time Coordinates (Base: Chennai corridor)
-float curLat = 13.0827;
-float curLng = 80.2707;
-float curSpeed = 35.0;
+// Indoor Chennai simulation coordinates
+float curLat     = 13.0827;
+float curLng     = 80.2707;
+float curSpeed   = 35.0;
 float curHeading = 45.0;
-int curSats = 6;
+int   curSats    = 6;
 
-// Send AT command and wait for expected response
-bool sendAT(const String& cmd, const char* expected, unsigned long timeout = 3000) {
+// ── AT Command Helper ─────────────────────────────────────────────────────────
+bool sendAT(const char* cmd, const char* expected, unsigned long timeout = 3000) {
   gsm->listen();
-  while (gsm->available()) gsm->read(); // clean buffer
-  
+  while (gsm->available()) gsm->read();
+
   gsm->println(cmd);
   Serial.print(F("[GSM] >> ")); Serial.println(cmd);
-  
+
   unsigned long start = millis();
-  String resp = "";
+  static char resp[120];
+  uint8_t ri = 0;
+  memset(resp, 0, sizeof(resp));
+
   while (millis() - start < timeout) {
-    while (gsm->available()) {
-      char c = (char)gsm->read();
-      resp += c;
+    while (gsm->available() && ri < 119) {
+      resp[ri++] = (char)gsm->read();
     }
-    if (resp.indexOf(expected) != -1) {
+    if (strstr(resp, expected) != NULL) {
       Serial.print(F("[GSM] << OK: ")); Serial.println(resp);
       return true;
     }
-    if (resp.indexOf("ERROR") != -1) {
+    if (strstr(resp, "ERROR") != NULL) {
       Serial.print(F("[GSM] << ERR: ")); Serial.println(resp);
       return false;
     }
@@ -74,148 +93,174 @@ bool sendAT(const String& cmd, const char* expected, unsigned long timeout = 300
   return false;
 }
 
-// Like sendAT but treats ERROR as non-fatal (for cleanup commands like HTTPTERM)
-void sendATSafe(const String& cmd, unsigned long timeout = 1500) {
+// Safe version — ignores ERROR (for CIPCLOSE, CIPSHUT on closed connection)
+void sendATSafe(const char* cmd, unsigned long timeout = 1500) {
   gsm->listen();
   while (gsm->available()) gsm->read();
   gsm->println(cmd);
   Serial.print(F("[GSM] >> ")); Serial.println(cmd);
   unsigned long start = millis();
-  String resp = "";
+  static char resp[80];
+  uint8_t ri = 0;
+  memset(resp, 0, sizeof(resp));
   while (millis() - start < timeout) {
-    while (gsm->available()) { char c = (char)gsm->read(); resp += c; }
-    if (resp.indexOf("OK") != -1 || resp.indexOf("ERROR") != -1) break;
+    while (gsm->available() && ri < 79) resp[ri++] = (char)gsm->read();
+    if (strstr(resp, "OK") != NULL || strstr(resp, "ERROR") != NULL ||
+        strstr(resp, "SHUT OK") != NULL) break;
   }
   Serial.print(F("[GSM] << ")); Serial.println(resp);
 }
 
-// Connect to BSNL 2G GPRS using direct TCP/IP Stack
+// ── GPRS Initialization ───────────────────────────────────────────────────────
 bool initGPRS() {
   digitalWrite(LED_PIN, LOW);
   gprsOnline = false;
   Serial.println(F("\n--- Initializing BSNL GPRS Network ---"));
 
-  // Resync baud
-  for (int i = 0; i < 3; i++) {
-    sendAT("AT", "OK", 800);
-    delay(150);
-  }
-
-  sendAT("ATE0", "OK", 1000);        // Echo off
-  delay(500);
-  sendAT("AT+CMEE=2", "OK", 1000);   // Verbose errors
-  delay(500);
-  sendAT("AT+CFUN=1", "OK", 3000);   // Enable Radio
+  for (int i = 0; i < 3; i++) { sendAT("AT", "OK", 800); delay(150); }
+  sendAT("ATE0",    "OK", 1000);
+  sendAT("AT+CMEE=2","OK", 1000);
+  sendAT("AT+CFUN=1","OK", 3000);
   delay(1000);
 
-  // Check SIM Card Status
-  gsm->listen();
-  while (gsm->available()) gsm->read();
+  // Check SIM
+  gsm->listen(); while (gsm->available()) gsm->read();
   gsm->println(F("AT+CPIN?"));
   delay(800);
-  String cpinResp = "";
-  while (gsm->available()) cpinResp += (char)gsm->read();
-  Serial.print(F("[SIM STATUS] CPIN: ")); Serial.println(cpinResp);
+  static char cpin[60]; uint8_t ci = 0; memset(cpin, 0, 60);
+  while (gsm->available() && ci < 59) cpin[ci++] = (char)gsm->read();
+  Serial.print(F("[SIM] CPIN: ")); Serial.println(cpin);
 
-  // Check Signal Strength
+  // Signal strength
   gsm->println(F("AT+CSQ"));
   delay(800);
-  String csqResp = "";
-  while (gsm->available()) csqResp += (char)gsm->read();
-  Serial.print(F("[SIGNAL] CSQ: ")); Serial.println(csqResp);
+  static char csq[40]; uint8_t qi = 0; memset(csq, 0, 40);
+  while (gsm->available() && qi < 39) csq[qi++] = (char)gsm->read();
+  Serial.print(F("[SIGNAL] CSQ: ")); Serial.println(csq);
 
-  // Auto-Select Operator (BSNL)
   sendAT("AT+COPS=0", "OK", 3000);
 
-  // Wait for network registration (1 = home, 5 = roaming)
-  Serial.println(F("[GSM] Waiting for BSNL cell tower registration..."));
+  // Wait for BSNL registration
+  Serial.println(F("[GSM] Waiting for BSNL cell tower..."));
   bool registered = false;
-  for (int i = 0; i < 25; i++) {
-    gsm->listen();
-    while (gsm->available()) gsm->read();
+  for (int i = 0; i < 25 && !registered; i++) {
+    gsm->listen(); while (gsm->available()) gsm->read();
     gsm->println(F("AT+CREG?"));
     delay(500);
-    String r = "";
-    while (gsm->available()) r += (char)gsm->read();
-    Serial.print(F("[GSM] CREG: ")); Serial.println(r);
-    if (r.indexOf(",1") != -1 || r.indexOf(",5") != -1) {
-      Serial.println(F("[GSM] Registered on BSNL Network!"));
+    static char creg[60]; uint8_t cr = 0; memset(creg, 0, 60);
+    while (gsm->available() && cr < 59) creg[cr++] = (char)gsm->read();
+    Serial.print(F("[CREG] ")); Serial.println(creg);
+    if (strstr(creg, ",1") || strstr(creg, ",5")) {
       registered = true;
-      break;
-    }
-    delay(1200);
+      Serial.println(F("[GSM] Registered on BSNL!"));
+    } else delay(1200);
   }
+  if (!registered) return false;
 
-  if (!registered) {
-    Serial.println(F("[GSM] Registration taking time. Retrying search..."));
-    return false;
-  }
-
-  // Direct TCP/IP Stack Setup (Lowest Power, Most Reliable on 2G)
-  sendAT("AT+CIPSHUT", "SHUT OK", 3000);
-  delay(500);
-  sendAT("AT+CIPSTATUS", "OK", 2000);
-  sendAT("AT+CIPMUX=0", "OK", 1000);   // Single IP connection
-  sendAT("AT+CIPRXGET=0", "OK", 1000);  // 0 = Automatic output of server data to UART!
-  sendAT("AT+CIPHEAD=1", "OK", 1000);   // Include IP data header
-
-  // Attach GPRS
-  sendAT("AT+CGATT=1", "OK", 4000);
+  // ── GPRS via Direct TCP/IP Stack (CIICR) ──────────────────────────────────
+  sendATSafe("AT+CIPSHUT");
+  delay(300);
+  sendAT("AT+CIPMUX=0",  "OK", 1000);
+  sendAT("AT+CIPRXGET=0","OK", 1000);
+  sendAT("AT+CGATT=1",   "OK", 4000);
   delay(500);
 
-  // APNs for BSNL Tamil Nadu (portalnmms first since it succeeded)
   const char* apns[] = {"portalnmms", "bsnlnet", "bsnlstream", "www"};
-
   for (int i = 0; i < 4; i++) {
     const char* apn = apns[i];
     Serial.print(F("[GSM] Trying APN: ")); Serial.println(apn);
 
-    sendAT("AT+CIPSHUT", "SHUT OK", 2000);
+    sendATSafe("AT+CIPSHUT");
     delay(300);
-    sendAT("AT+CIPMUX=0", "OK", 1000);
-    sendAT("AT+CIPRXGET=0", "OK", 1000);
+    sendAT("AT+CIPMUX=0","OK", 1000);
     sendAT("AT+CGATT=1", "OK", 3000);
     delay(300);
 
-    String csttCmd = String("AT+CSTT=\"") + apn + "\",\"\",\"\"";
+    // Build AT+CSTT command in a char buffer
+    static char csttCmd[50];
+    strcpy(csttCmd, "AT+CSTT=\"");
+    strcat(csttCmd, apn);
+    strcat(csttCmd, "\",\"\",\"\"");
     sendAT(csttCmd, "OK", 3000);
     delay(400);
 
-    Serial.print(F("[GSM] Bringing up GPRS with ")); Serial.print(apn); Serial.println(F("..."));
+    Serial.print(F("[GPRS] Bringing up with ")); Serial.println(apn);
     if (sendAT("AT+CIICR", "OK", 12000)) {
       delay(500);
-
-      // Get Local IP Address (CIFSR)
-      gsm->listen();
-      while (gsm->available()) gsm->read();
+      gsm->listen(); while (gsm->available()) gsm->read();
       gsm->println(F("AT+CIFSR"));
       delay(1000);
-      String ipResp = "";
-      while (gsm->available()) ipResp += (char)gsm->read();
-      Serial.print(F("[BSNL IP ALLOCATED]: ")); Serial.println(ipResp);
+      static char ipbuf[40]; uint8_t ip = 0; memset(ipbuf, 0, 40);
+      while (gsm->available() && ip < 39) ipbuf[ip++] = (char)gsm->read();
+      Serial.print(F("[BSNL IP]: ")); Serial.println(ipbuf);
 
-      if (ipResp.indexOf(".") != -1 && ipResp.indexOf("ERROR") == -1) {
+      if (strchr(ipbuf, '.') && !strstr(ipbuf, "ERROR")) {
         gprsOnline = true;
         digitalWrite(LED_PIN, HIGH);
-        Serial.print(F("[GSM] GPRS ONLINE (Active APN: "));
-        Serial.print(apn);
-        Serial.println(F(")!\n"));
+        Serial.print(F("[GPRS] ONLINE! APN: ")); Serial.println(apn);
         return true;
       }
-    } else {
-      Serial.print(F("[GSM] APN ")); Serial.print(apn); Serial.println(F(" failed. Trying next..."));
-      delay(500);
     }
+    Serial.print(F("[GPRS] APN failed: ")); Serial.println(apn);
+    delay(500);
   }
-
-  Serial.println(F("[GSM] Direct GPRS Connection Failed.\n"));
-  gprsOnline = false;
+  Serial.println(F("[GPRS] All APNs failed."));
   return false;
 }
 
-// Send HTTP POST using SIM800L built-in HTTP client (handles HTTPS/TLS properly)
+// ── MQTT CONNECT Packet Builder ───────────────────────────────────────────────
+// Builds a minimal MQTT v3.1.1 CONNECT packet into buf, returns length
+uint16_t buildMqttConnect(uint8_t* buf) {
+  const char* proto    = "MQTT";
+  uint8_t     protoLen = 4;
+  uint8_t     clientIdLen = strlen(MQTT_CLIENT_ID);
+
+  // Variable header: protocol name + level + flags + keepalive
+  uint16_t varLen = 2 + protoLen + 1 + 1 + 2 + 2 + clientIdLen;
+
+  buf[0] = 0x10;              // CONNECT packet type
+  buf[1] = (uint8_t)varLen;   // Remaining length
+  buf[2] = 0x00; buf[3] = protoLen;
+  buf[4] = 'M'; buf[5] = 'Q'; buf[6] = 'T'; buf[7] = 'T';
+  buf[8] = 0x04;  // Protocol level 4 = MQTT 3.1.1
+  buf[9] = 0x02;  // Connect flags: Clean Session only
+  buf[10] = 0x00; buf[11] = 0x3C;   // Keep-alive 60s
+  buf[12] = 0x00; buf[13] = clientIdLen;
+  memcpy(buf + 14, MQTT_CLIENT_ID, clientIdLen);
+
+  return 14 + clientIdLen;
+}
+
+// Builds MQTT PUBLISH packet, returns length
+uint16_t buildMqttPublish(uint8_t* buf, const char* topic, const char* payload) {
+  uint8_t  topicLen   = strlen(topic);
+  uint16_t payloadLen = strlen(payload);
+  uint16_t remaining  = 2 + topicLen + payloadLen;  // QoS 0 — no packet ID
+
+  buf[0] = 0x30;  // PUBLISH, QoS 0, no retain
+  // Remaining length (variable-length encoding)
+  uint8_t ri = 1;
+  uint16_t rem = remaining;
+  do {
+    uint8_t enc = rem % 128;
+    rem /= 128;
+    if (rem > 0) enc |= 0x80;
+    buf[ri++] = enc;
+  } while (rem > 0);
+
+  buf[ri++] = 0x00;
+  buf[ri++] = topicLen;
+  memcpy(buf + ri, topic, topicLen);
+  ri += topicLen;
+  memcpy(buf + ri, payload, payloadLen);
+  ri += payloadLen;
+
+  return ri;
+}
+
+// ── Publish GPS via MQTT over Plain TCP ───────────────────────────────────────
 bool postTelemetry(float lat, float lng, float speedKmh, float headingDeg, int sats) {
-  // ─── Build payload in static char buffer (saves SRAM vs String) ──────────
+  // Build JSON payload in static char buffer
   static char payload[200];
   static char numBuf[12];
 
@@ -224,199 +269,135 @@ bool postTelemetry(float lat, float lng, float speedKmh, float headingDeg, int s
   strcat(payload, "\",\"api_key\":\"");
   strcat(payload, API_KEY);
   strcat(payload, "\",\"lat\":");
-  dtostrf(lat, 1, 6, numBuf);  strcat(payload, numBuf);
+  dtostrf(lat, 1, 6, numBuf);   strcat(payload, numBuf);
   strcat(payload, ",\"lng\":");
-  dtostrf(lng, 1, 6, numBuf);  strcat(payload, numBuf);
+  dtostrf(lng, 1, 6, numBuf);   strcat(payload, numBuf);
   strcat(payload, ",\"speed_kmh\":");
-  dtostrf(speedKmh, 1, 1, numBuf);  strcat(payload, numBuf);
+  dtostrf(speedKmh, 1, 1, numBuf); strcat(payload, numBuf);
   strcat(payload, ",\"heading\":");
-  dtostrf(headingDeg, 1, 1, numBuf);  strcat(payload, numBuf);
+  dtostrf(headingDeg, 1, 1, numBuf); strcat(payload, numBuf);
   strcat(payload, ",\"satellites\":");
-  itoa(sats, numBuf, 10);  strcat(payload, numBuf);
+  itoa(sats, numBuf, 10);        strcat(payload, numBuf);
   strcat(payload, ",\"fix_quality\":1,\"source\":\"arduino\"}");
 
-  uint16_t payLen = strlen(payload);
-  Serial.print(F("[POST] payload(")); Serial.print(payLen); Serial.print(F("): "));
-  Serial.println(payload);
+  Serial.print(F("[MQTT] Publishing: ")); Serial.println(payload);
 
-  // ─── 1. Release direct TCP stack before opening SAPBR bearer ─────────────
-  sendATSafe("AT+CIPSHUT");   // Close CIICR if open — SAPBR and CIICR cannot coexist
-  delay(300);
-
-  // ─── 2. Configure & open SAPBR bearer ────────────────────────────────────
-  sendAT(F("AT+SAPBR=3,1,\"Contype\",\"GPRS\""), "OK", 2000);
-  sendAT(F("AT+SAPBR=3,1,\"APN\",\"portalnmms\""), "OK", 2000);
-  sendAT(F("AT+SAPBR=3,1,\"USER\",\"\""), "OK", 1000);
-  sendAT(F("AT+SAPBR=3,1,\"PWD\",\"\""), "OK", 1000);
-  if (!sendAT(F("AT+SAPBR=1,1"), "OK", 10000)) {
-    // Bearer may already be open — check its status
-    if (!sendAT(F("AT+SAPBR=2,1"), "1,1", 3000)) {
-      Serial.println(F("[HTTP] Bearer open failed!"));
-      gprsOnline = false;
-      return false;
-    }
-  }
-  delay(300);
-
-  // ─── 3. Init HTTP stack ───────────────────────────────────────────────────
-  sendATSafe("AT+HTTPTERM");  // Clear any leftover session
+  // ── 1. Open TCP to HiveMQ MQTT broker (port 1883, NO SSL!) ────────────────
+  sendATSafe("AT+CIPCLOSE");   // Close any stale connection
   delay(200);
-  if (!sendAT(F("AT+HTTPINIT"), "OK", 3000)) {
-    Serial.println(F("[HTTP] HTTPINIT failed!"));
+
+  static char cipstart[80];
+  strcpy(cipstart, "AT+CIPSTART=\"TCP\",\"");
+  strcat(cipstart, MQTT_HOST);
+  strcat(cipstart, "\",\"1883\"");
+
+  Serial.println(F("[TCP] Connecting to broker.hivemq.com:1883..."));
+  if (!sendAT(cipstart, "CONNECT OK", 12000)) {
+    Serial.println(F("[TCP] Connect failed!"));
+    sendATSafe("AT+CIPCLOSE");
     return false;
   }
-  sendAT(F("AT+HTTPPARA=\"CID\",1"), "OK", 1000);
-  sendAT(F("AT+HTTPPARA=\"URL\",\"https://tn-ambulance-backend.onrender.com/api/gps-update\""), "OK", 2000);
-  sendAT(F("AT+HTTPPARA=\"CONTENT\",\"application/json\""), "OK", 1000);
-  sendAT(F("AT+HTTPSSL=1"), "OK", 2000);
+  Serial.println(F("[TCP] Connected to HiveMQ!"));
+  delay(200);
 
-  // ─── 4. Load POST body ────────────────────────────────────────────────────
-  static char dataCmdBuf[30];
-  strcpy(dataCmdBuf, "AT+HTTPDATA=");
-  itoa(payLen, numBuf, 10);
-  strcat(dataCmdBuf, numBuf);
-  strcat(dataCmdBuf, ",10000");
-
-  Serial.print(F("[HTTP] Sending: ")); Serial.println(dataCmdBuf);
-
-  if (!sendAT(dataCmdBuf, "DOWNLOAD", 6000)) {
-    Serial.println(F("[HTTP] HTTPDATA DOWNLOAD prompt failed!"));
-    sendATSafe("AT+HTTPTERM");
-    return false;
-  }
-
-  // Immediately write raw payload bytes
-  delay(50);
-  gsm->listen();
-  gsm->write((const uint8_t*)payload, payLen);
-  delay(800);
-  // Drain the SIM800L "OK" after data absorbed
-  { unsigned long t2 = millis();
-    while (millis() - t2 < 2000) { while (gsm->available()) { char c = (char)gsm->read(); Serial.write(c); } }
-    Serial.println();
-  }
-  Serial.println(F("[HTTP] Payload loaded. Executing POST..."));
-
-  // ─── 5. Execute POST ──────────────────────────────────────────────────────
+  // ── 2. Send MQTT CONNECT packet ───────────────────────────────────────────
+  static uint8_t mqttBuf[100];
+  uint16_t len = buildMqttConnect(mqttBuf);
   gsm->listen();
   while (gsm->available()) gsm->read();
-  gsm->println(F("AT+HTTPACTION=1"));
-  Serial.println(F("[HTTP] >> AT+HTTPACTION=1 (POST)"));
 
-  // Wait up to 20 sec for +HTTPACTION URC over 2G
-  unsigned long actionStart = millis();
-  static char actionBuf[80];
-  memset(actionBuf, 0, sizeof(actionBuf));
-  uint8_t ai = 0;
-  bool foundTag = false;
-  unsigned long tagTime = 0;
-
-  while (millis() - actionStart < 20000) {
-    while (gsm->available() && ai < 79) {
-      char c = (char)gsm->read();
-      actionBuf[ai++] = c;
-      Serial.write(c);
-    }
-    if (!foundTag && strstr(actionBuf, "+HTTPACTION") != NULL) {
-      foundTag = true;
-      tagTime = millis();  // Found the tag — now wait extra time for full line
-    }
-    // Break only after full line received (has comma = status code present)
-    // or 2 seconds after tag if full line doesn't arrive
-    if (foundTag) {
-      if (strstr(actionBuf, ",200,") != NULL || strstr(actionBuf, ",40") != NULL ||
-          strstr(actionBuf, ",50") != NULL || millis() - tagTime > 2000) break;
-    }
+  // AT+CIPSEND=<len> for exact-length binary packet
+  static char cipsend[20];
+  strcpy(cipsend, "AT+CIPSEND=");
+  itoa(len, numBuf, 10);
+  strcat(cipsend, numBuf);
+  if (!sendAT(cipsend, ">", 3000)) {
+    Serial.println(F("[MQTT] No > prompt for CONNECT!"));
+    sendATSafe("AT+CIPCLOSE");
+    return false;
   }
-  Serial.println();
-  Serial.print(F("[HTTP] Full response: ")); Serial.println(actionBuf);
+  gsm->write(mqttBuf, len);
+  delay(600);
 
-  bool success = (strstr(actionBuf, ",200,") != NULL);
-
-  // ─── 6. Read & print response body ───────────────────────────────────────
-  if (success) {
-    gsm->println(F("AT+HTTPREAD"));
-    delay(1000);
-    while (gsm->available()) { Serial.write((char)gsm->read()); }
-    Serial.println();
-    Serial.println(F("\n****************************************************"));
-    Serial.println(F("[SUCCESS!] Live Telemetry Delivered Over BSNL Cellular!"));
-    Serial.println(F("****************************************************\n"));
-    digitalWrite(LED_PIN, LOW); delay(100); digitalWrite(LED_PIN, HIGH);
-  } else {
-    Serial.print(F("[HTTP] Response: ")); Serial.println(actionBuf);
+  // Read CONNACK (should be 0x20 0x02 0x00 0x00)
+  { unsigned long t = millis(); bool ok = false;
+    while (millis() - t < 3000) {
+      if (gsm->available()) {
+        uint8_t b = gsm->read();
+        if (b == 0x20) ok = true;  // CONNACK packet type
+      }
+    }
+    if (!ok) {
+      Serial.println(F("[MQTT] No CONNACK from broker!"));
+      sendATSafe("AT+CIPCLOSE");
+      return false;
+    }
+    // Drain remaining CONNACK bytes
+    while (gsm->available()) gsm->read();
+    Serial.println(F("[MQTT] CONNACK received — broker accepted!"));
   }
 
-  // ─── 7. Cleanup ──────────────────────────────────────────────────────────
-  sendATSafe("AT+HTTPTERM");
-  // Keep SAPBR bearer open between cycles
+  // ── 3. Send MQTT PUBLISH packet ───────────────────────────────────────────
+  static uint8_t pubBuf[250];
+  uint16_t pubLen = buildMqttPublish(pubBuf, MQTT_TOPIC, payload);
 
-  return success;
+  strcpy(cipsend, "AT+CIPSEND=");
+  itoa(pubLen, numBuf, 10);
+  strcat(cipsend, numBuf);
+  if (!sendAT(cipsend, ">", 3000)) {
+    Serial.println(F("[MQTT] No > prompt for PUBLISH!"));
+    sendATSafe("AT+CIPCLOSE");
+    return false;
+  }
+  gsm->write(pubBuf, pubLen);
+  delay(500);
+
+  // Drain any remaining bytes (no ACK for QoS 0)
+  while (gsm->available()) gsm->read();
+  sendATSafe("AT+CIPCLOSE");
+
+  Serial.println(F("\n****************************************************"));
+  Serial.println(F("[SUCCESS!] GPS Published via MQTT over BSNL Cellular!"));
+  Serial.print(F("  Topic : ")); Serial.println(MQTT_TOPIC);
+  Serial.println(F("****************************************************\n"));
+
+  digitalWrite(LED_PIN, LOW); delay(100); digitalWrite(LED_PIN, HIGH);
+  return true;
 }
 
-
-
-
-
-// Universal Matrix Scanner for SIM800L
+// ── Universal Matrix Scanner ──────────────────────────────────────────────────
 bool scanAndLockSIM800L() {
   long testBauds[] = {9600, 19200, 38400, 57600, 115200, 4800};
-  
-  Serial.println(F("\n[MATRIX SCANNER] Scanning for SIM800L settings..."));
+  Serial.println(F("\n[MATRIX SCANNER] Scanning for SIM800L..."));
 
-  // Test combinations: (Pin4 vs Pin5) x (Normal vs Inverted) x (Baud rates)
   for (int inverted = 0; inverted <= 1; inverted++) {
     bool inv = (inverted == 1);
-    
     for (int p = 0; p < 2; p++) {
       int rxPin = (p == 0) ? 5 : 4;
       int txPin = (p == 0) ? 4 : 5;
-      
       for (int b = 0; b < 6; b++) {
-        long currentBaud = testBauds[b];
-        
+        long baud = testBauds[b];
         SoftwareSerial testPort(rxPin, txPin, inv);
-        testPort.begin(currentBaud);
+        testPort.begin(baud);
         testPort.listen();
         delay(60);
-        
-        // Flush buffer
         while (testPort.available()) testPort.read();
-        
-        // Send AT
         testPort.print("AT\r\n");
         delay(250);
-        
-        String r = "";
-        while (testPort.available()) {
-          char c = (char)testPort.read();
-          r += c;
-        }
-        
+        static char r[40]; uint8_t ri = 0; memset(r, 0, 40);
+        while (testPort.available() && ri < 39) r[ri++] = (char)testPort.read();
         Serial.print(F("RX=")); Serial.print(rxPin);
         Serial.print(F(" TX=")); Serial.print(txPin);
-        Serial.print(F(" | Baud=")); Serial.print(currentBaud);
-        Serial.print(F(" | Inv=")); Serial.print(inv ? "T" : "F");
+        Serial.print(F(" Baud=")); Serial.print(baud);
+        Serial.print(F(" Inv=")); Serial.print(inv ? "T" : "F");
         Serial.print(F(" -> \"")); Serial.print(r); Serial.println(F("\""));
-        
-        if (r.indexOf("OK") != -1 || r.indexOf("AT") != -1) {
-          Serial.println(F("\n******************************************"));
-          Serial.print(F("[FOUND!] SIM800L matched on RX=")); Serial.print(rxPin);
-          Serial.print(F(" TX=")); Serial.print(txPin);
-          Serial.print(F(" at Baud=")); Serial.print(currentBaud);
-          Serial.println(F("!"));
-          Serial.println(F("******************************************\n"));
-          
-          // Lock to 9600 permanently
-          testPort.print("AT+IPR=9600\r\n");
-          delay(200);
-          testPort.print("ATE0\r\n");
-          delay(200);
-          testPort.print("AT&W\r\n");
-          delay(300);
-          
-          if (p == 0) gsm = &gsmSerialB;
-          else gsm = &gsmSerialA;
+
+        if (strstr(r, "OK") || strstr(r, "AT")) {
+          Serial.println(F("\n[FOUND!] SIM800L locked!"));
+          testPort.print("AT+IPR=9600\r\n"); delay(200);
+          testPort.print("ATE0\r\n");        delay(200);
+          testPort.print("AT&W\r\n");        delay(300);
+          gsm = (p == 0) ? &gsmSerialB : &gsmSerialA;
           gsm->begin(9600);
           return true;
         }
@@ -426,21 +407,28 @@ bool scanAndLockSIM800L() {
   return false;
 }
 
+// ── Setup ─────────────────────────────────────────────────────────────────────
 void setup() {
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, LOW);
-
-  // USB Serial Monitor
   Serial.begin(9600);
   delay(1000);
-  
+
+  // Build MQTT topic and client ID at startup
+  strcpy(MQTT_TOPIC, "ambulance/");
+  strcat(MQTT_TOPIC, DEVICE_ID);
+  strcat(MQTT_TOPIC, "/gps");
+
+  strcpy(MQTT_CLIENT_ID, "ard-amb-");
+  strcat(MQTT_CLIENT_ID, DEVICE_ID);
+
   Serial.println(F("\n=========================================="));
-  Serial.println(F("TN 108 AMBULANCE — STANDALONE SIM800L GPRS"));
+  Serial.println(F("TN 108 AMBULANCE — SIM800L MQTT FIRMWARE"));
   Serial.println(F("=========================================="));
-  
+  Serial.print(F("MQTT topic: ")); Serial.println(MQTT_TOPIC);
+
   gpsSerial.begin(9600);
-  
-  // 3-second countdown so user sees everything on Serial Monitor
+
   Serial.println(F("Starting in 3 seconds..."));
   delay(1000);
   Serial.println(F("Starting in 2 seconds..."));
@@ -448,15 +436,13 @@ void setup() {
   Serial.println(F("Starting in 1 second..."));
   delay(1000);
 
-  // Run Matrix Scanner
   scanAndLockSIM800L();
-  
   delay(1000);
   initGPRS();
 }
 
+// ── Loop ──────────────────────────────────────────────────────────────────────
 void loop() {
-  // 1. If GPRS is not online, re-scan and initialize
   if (!gprsOnline) {
     scanAndLockSIM800L();
     initGPRS();
@@ -464,43 +450,36 @@ void loop() {
     return;
   }
 
-  // 2. Read real GPS data from NEO-6M on Pins 8 & 9
+  // Read NEO-6M GPS
   gpsSerial.listen();
   unsigned long scan = millis();
   while (millis() - scan < 1000) {
-    while (gpsSerial.available()) {
-      gps.encode(gpsSerial.read());
-    }
+    while (gpsSerial.available()) gps.encode(gpsSerial.read());
   }
 
-  // 3. Check if GPS has live satellite fix
   if (gps.location.isValid()) {
     curLat     = gps.location.lat();
     curLng     = gps.location.lng();
     curSpeed   = gps.speed.kmph();
     curHeading = gps.course.deg();
     curSats    = gps.satellites.value();
-    Serial.print(F("[SATELLITE GPS] Lat: ")); Serial.print(curLat, 6);
-    Serial.print(F(" | Lng: ")); Serial.print(curLng, 6);
-    Serial.print(F(" | Speed: ")); Serial.println(curSpeed);
+    Serial.print(F("[GPS SAT] Lat:")); Serial.print(curLat, 6);
+    Serial.print(F(" Lng:")); Serial.println(curLng, 6);
   } else {
-    // Indoor smooth route along Chennai corridor
-    curLat += (random(-5, 6) * 0.00004);
-    curLng += (random(-5, 6) * 0.00004);
-    curSpeed = 32.0 + random(0, 12);
+    // Indoor Chennai simulation
+    curLat    += (random(-5, 6) * 0.00004f);
+    curLng    += (random(-5, 6) * 0.00004f);
+    curSpeed   = 32.0 + random(0, 12);
     curHeading = (int)(curHeading + random(-10, 11) + 360) % 360;
-    Serial.println(F("[INDOOR NAV] Navigating Chennai route..."));
+    Serial.println(F("[INDOOR NAV] Simulating Chennai route..."));
   }
 
-  // 4. Send cellular update every 4 seconds
+  // Send every 4 seconds
   if (millis() - lastSend >= 4000) {
     lastSend = millis();
     bool ok = postTelemetry(curLat, curLng, curSpeed, curHeading, curSats);
     if (!ok) {
-      gprsOnline = false; // Trigger re-scan if connection drops
+      gprsOnline = false;  // trigger re-init
     }
   }
 }
-
-
-

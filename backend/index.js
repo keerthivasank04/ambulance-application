@@ -9,6 +9,8 @@ const { getDb }    = require('./src/db/database');
 const { seed }     = require('./src/db/seed');
 const { resumeActiveSimulations } = require('./src/services/gpsSimulator');
 const { initSignalOverrides }     = require('./src/services/trafficSignal');
+const { initMqttBridge }          = require('./src/services/mqttBridge');
+
 
 const requestsRoute   = require('./src/routes/requests');
 const ambulancesRoute = require('./src/routes/ambulances');
@@ -149,6 +151,8 @@ function start() {
   seed();
   initSignalOverrides();    // restore persisted traffic signal overrides
   resumeActiveSimulations();
+  initMqttBridge();         // SIM800L → HiveMQ MQTT bridge (plain TCP, no TLS)
+
 
   server.listen(PORT, () => {
     console.log(`\nTN Ambulance Backend`);

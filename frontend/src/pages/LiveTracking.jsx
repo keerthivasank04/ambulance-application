@@ -309,7 +309,7 @@ export default function LiveTracking() {
                   </div>
                   {routeDistanceKm && (
                     <div className="eta-speed">
-                      📍 {routeDistanceKm} km away
+                      Distance: {routeDistanceKm} km
                     </div>
                   )}
                 </div>
@@ -338,7 +338,7 @@ export default function LiveTracking() {
                     className="btn btn-ghost btn-sm"
                     style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', textDecoration: 'none', borderColor: 'var(--border)' }}
                   >
-                    🏥 Call Hospital ({req.hospital_name})
+                    Call Hospital ({req.hospital_name})
                   </a>
                 )}
                 <a
@@ -346,7 +346,7 @@ export default function LiveTracking() {
                   className="btn btn-ghost btn-sm"
                   style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', textDecoration: 'none', borderColor: 'var(--border)', color: 'var(--tn-red)' }}
                 >
-                  🚨 108 Emergency Control Room
+                  108 Emergency Control Room
                 </a>
               </div>
             </div>
@@ -358,7 +358,7 @@ export default function LiveTracking() {
                 {[
                   { label: 'Vehicle Number', value: req.registration_number ? `${req.registration_number} (${req.ambulance_type})` : null },
                   { label: 'Driver', value: req.driver_name },
-                  { label: 'GPS Satellites', value: `🛰️ ${sats} Satellites Locked` },
+                  { label: 'GPS Satellites', value: `${sats} Satellites Locked` },
                   { label: 'Compass Heading', value: `${getBearingName(bearing)} (${Math.round(bearing)}°)` },
                   { label: 'Assigned Hospital', value: req.hospital_name },
                   { label: 'Hospital Address', value: req.hospital_address },
@@ -430,7 +430,7 @@ export default function LiveTracking() {
                   className={`btn btn-sm ${cameraMode === 'follow' ? 'btn-primary' : 'btn-ghost'}`}
                   style={{ background: cameraMode === 'follow' ? 'var(--tn-navy)' : 'var(--surface)', boxShadow: 'var(--card-shadow)', border: '1px solid var(--border)' }}
                 >
-                  🎯 Follow Vehicle
+                  Follow Vehicle
                 </button>
                 <button
                   type="button"
@@ -438,9 +438,10 @@ export default function LiveTracking() {
                   className={`btn btn-sm ${cameraMode === 'fit' ? 'btn-primary' : 'btn-ghost'}`}
                   style={{ background: cameraMode === 'fit' ? 'var(--tn-navy)' : 'var(--surface)', boxShadow: 'var(--card-shadow)', border: '1px solid var(--border)' }}
                 >
-                  🗺️ Full Route
+                  Full Route
                 </button>
               </div>
+
 
               {/* Live Speed & Satellite Pill */}
               <div className="map-live-pill">

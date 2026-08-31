@@ -439,7 +439,7 @@ export default function AdminDashboard() {
                       <div>
                         <div style={{ fontSize: '0.65rem', fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase' }}>Satellites</div>
                         <div style={{ fontSize: '0.8125rem', fontWeight: 700, color: 'var(--green)' }}>
-                          🛰️ {selectedAmb.gps_satellites || 6} Locked
+                          {selectedAmb.gps_satellites || 6} Locked
                         </div>
                       </div>
                     </div>
@@ -447,13 +447,13 @@ export default function AdminDashboard() {
                     {/* Coordinates & Copy */}
                     {selectedAmb.current_lat && selectedAmb.current_lng && (
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '0.75rem', color: 'var(--text-3)' }}>
-                        <span>📍 {selectedAmb.current_lat.toFixed(5)}, {selectedAmb.current_lng.toFixed(5)}</span>
+                        <span>GPS: {selectedAmb.current_lat.toFixed(5)}, {selectedAmb.current_lng.toFixed(5)}</span>
                         <button
                           type="button"
                           onClick={() => copyCoordinates(selectedAmb.current_lat, selectedAmb.current_lng)}
                           style={{ background: 'none', border: 'none', color: 'var(--blue)', cursor: 'pointer', fontWeight: 600, fontSize: '0.72rem' }}
                         >
-                          {coordsCopied ? 'Copied!' : 'Copy GPS'}
+                          {coordsCopied ? 'Copied' : 'Copy Coordinates'}
                         </button>
                       </div>
                     )}
@@ -466,9 +466,10 @@ export default function AdminDashboard() {
                         className="btn btn-primary btn-sm"
                         style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.35rem', textDecoration: 'none', fontSize: '0.75rem' }}
                       >
-                        🔴 Open Live Patient Tracking HUD
+                        Open Live Patient Tracking HUD
                       </a>
                     )}
+
                   </div>
                 </div>
               ) : null}
@@ -536,8 +537,9 @@ export default function AdminDashboard() {
                             {a.status}
                           </span>
                           <div style={{ fontSize: '0.68rem', fontWeight: 600, color: a.current_speed_kmh > 0 ? 'var(--green)' : 'var(--text-3)', marginTop: '0.15rem' }}>
-                            {a.current_speed_kmh > 0 ? `⚡ ${a.current_speed_kmh} km/h` : 'Idle'}
+                            {a.current_speed_kmh > 0 ? `${a.current_speed_kmh} km/h` : 'Idle'}
                           </div>
+
                         </div>
                       </div>
                     );

@@ -217,41 +217,69 @@ bool postTelemetry(float lat, float lng, float speedKmh, float headingDeg, int s
   return success;
 }
 
-// Standard SIMCOM Autobaud sync (sends AT\r\n repeatedly to sync internal clock)
-bool syncSIM800L(SoftwareSerial &port, const char* name) {
-  port.begin(9600);
-  port.listen();
-  delay(200);
+// Universal Matrix Scanner for SIM800L
+bool scanAndLockSIM800L() {
+  long testBauds[] = {9600, 19200, 38400, 57600, 115200, 4800};
   
-  Serial.print(F("[SYNC] Testing ")); Serial.print(name); Serial.println(F(" at 9600 baud..."));
-  
-  for (int attempt = 1; attempt <= 8; attempt++) {
-    // Flush buffer
-    while (port.available()) port.read();
+  Serial.println(F("\n[MATRIX SCANNER] Scanning for SIM800L settings..."));
+
+  // Test combinations: (Pin4 vs Pin5) x (Normal vs Inverted) x (Baud rates)
+  for (int inverted = 0; inverted <= 1; inverted++) {
+    bool inv = (inverted == 1);
     
-    // Send AT with standard CRLF
-    port.print("AT\r\n");
-    delay(350);
-    
-    String resp = "";
-    while (port.available()) {
-      char c = (char)port.read();
-      resp += c;
-    }
-    
-    Serial.print(F("  Attempt ")); Serial.print(attempt);
-    Serial.print(F(" -> \"")); Serial.print(resp); Serial.println(F("\""));
-    
-    if (resp.indexOf("OK") != -1 || resp.indexOf("AT") != -1) {
-      Serial.println(F("[SUCCESS] SIM800L locked to 9600 baud!"));
-      // Permanently write to non-volatile memory
-      port.print("AT+IPR=9600\r\n");
-      delay(200);
-      port.print("ATE0\r\n");
-      delay(200);
-      port.print("AT&W\r\n");
-      delay(200);
-      return true;
+    for (int p = 0; p < 2; p++) {
+      int rxPin = (p == 0) ? 5 : 4;
+      int txPin = (p == 0) ? 4 : 5;
+      
+      for (int b = 0; b < 6; b++) {
+        long currentBaud = testBauds[b];
+        
+        SoftwareSerial testPort(rxPin, txPin, inv);
+        testPort.begin(currentBaud);
+        testPort.listen();
+        delay(60);
+        
+        // Flush buffer
+        while (testPort.available()) testPort.read();
+        
+        // Send AT
+        testPort.print("AT\r\n");
+        delay(250);
+        
+        String r = "";
+        while (testPort.available()) {
+          char c = (char)testPort.read();
+          r += c;
+        }
+        
+        Serial.print(F("RX=")); Serial.print(rxPin);
+        Serial.print(F(" TX=")); Serial.print(txPin);
+        Serial.print(F(" | Baud=")); Serial.print(currentBaud);
+        Serial.print(F(" | Inv=")); Serial.print(inv ? "T" : "F");
+        Serial.print(F(" -> \"")); Serial.print(r); Serial.println(F("\""));
+        
+        if (r.indexOf("OK") != -1 || r.indexOf("AT") != -1) {
+          Serial.println(F("\n******************************************"));
+          Serial.print(F("[FOUND!] SIM800L matched on RX=")); Serial.print(rxPin);
+          Serial.print(F(" TX=")); Serial.print(txPin);
+          Serial.print(F(" at Baud=")); Serial.print(currentBaud);
+          Serial.println(F("!"));
+          Serial.println(F("******************************************\n"));
+          
+          // Lock to 9600 permanently
+          testPort.print("AT+IPR=9600\r\n");
+          delay(200);
+          testPort.print("ATE0\r\n");
+          delay(200);
+          testPort.print("AT&W\r\n");
+          delay(300);
+          
+          if (p == 0) gsm = &gsmSerialB;
+          else gsm = &gsmSerialA;
+          gsm->begin(9600);
+          return true;
+        }
+      }
     }
   }
   return false;
@@ -269,23 +297,17 @@ void setup() {
 
   gpsSerial.begin(9600);
 
-  // 1. Try Pin Orientation B: RX=Pin 5, TX=Pin 4
-  if (syncSIM800L(gsmSerialB, "Pins (RX=5, TX=4)")) {
+  // Run Matrix Scanner
+  if (!scanAndLockSIM800L()) {
+    Serial.println(F("[WARNING] Auto-scan ended. Defaulting to RX=5, TX=4 at 9600."));
     gsm = &gsmSerialB;
-  } 
-  // 2. If not B, Try Pin Orientation A: RX=Pin 4, TX=Pin 5
-  else if (syncSIM800L(gsmSerialA, "Pins (RX=4, TX=5)")) {
-    gsm = &gsmSerialA;
-  } 
-  // 3. Fallback
-  else {
-    Serial.println(F("[WARNING] Could not sync with SIM800L. Defaulting to RX=5, TX=4."));
-    gsm = &gsmSerialB;
+    gsmSerialB.begin(9600);
   }
 
   delay(1000);
   initGPRS();
 }
+
 
 
 

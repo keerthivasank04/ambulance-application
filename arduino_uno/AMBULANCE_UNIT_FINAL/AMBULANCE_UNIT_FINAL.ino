@@ -153,18 +153,42 @@ bool initGPRS() {
   sendAT("AT+SAPBR=3,1,\"USER\",\"\"", "OK", 1000);
   sendAT("AT+SAPBR=3,1,\"PWD\",\"\"", "OK", 1000);
   
-  if (sendAT("AT+SAPBR=1,1", "OK", 10000)) {
-    sendAT("AT+SAPBR=2,1", "OK", 2000);
+  Serial.println(F("[GSM] Opening GPRS Bearer with BSNL (Waiting up to 30s for IP)..."));
+  if (sendAT("AT+SAPBR=1,1", "OK", 30000)) {
+    delay(500);
+    gsm->listen();
+    while (gsm->available()) gsm->read();
+    gsm->println(F("AT+SAPBR=2,1"));
+    delay(1000);
+    String ipResp = "";
+    while (gsm->available()) ipResp += (char)gsm->read();
+    Serial.print(F("[GSM IP ALLOCATED]: ")); Serial.println(ipResp);
+
     gprsOnline = true;
     digitalWrite(LED_PIN, HIGH);
     Serial.println(F("[GSM] GPRS ONLINE (APN: bsnlnet)!\n"));
     return true;
   }
 
+  // Check if bearer was already opened
+  gsm->listen();
+  while (gsm->available()) gsm->read();
+  gsm->println(F("AT+SAPBR=2,1"));
+  delay(1000);
+  String ipCheck = "";
+  while (gsm->available()) ipCheck += (char)gsm->read();
+  if (ipCheck.indexOf("1,1") != -1) {
+    Serial.print(F("[GSM IP ACTIVE]: ")); Serial.println(ipCheck);
+    gprsOnline = true;
+    digitalWrite(LED_PIN, HIGH);
+    Serial.println(F("[GSM] GPRS ONLINE (Already Active)!\n"));
+    return true;
+  }
+
   // Try APN 2: portalnmms (BSNL Tamil Nadu South Zone)
   sendAT("AT+CGDCONT=1,\"IP\",\"portalnmms\"", "OK", 2000);
   sendAT("AT+SAPBR=3,1,\"APN\",\"portalnmms\"", "OK", 2000);
-  if (sendAT("AT+SAPBR=1,1", "OK", 10000)) {
+  if (sendAT("AT+SAPBR=1,1", "OK", 30000)) {
     sendAT("AT+SAPBR=2,1", "OK", 2000);
     gprsOnline = true;
     digitalWrite(LED_PIN, HIGH);
@@ -175,13 +199,14 @@ bool initGPRS() {
   // Try APN 3: www (Generic BSNL)
   sendAT("AT+CGDCONT=1,\"IP\",\"www\"", "OK", 2000);
   sendAT("AT+SAPBR=3,1,\"APN\",\"www\"", "OK", 2000);
-  if (sendAT("AT+SAPBR=1,1", "OK", 10000)) {
+  if (sendAT("AT+SAPBR=1,1", "OK", 30000)) {
     sendAT("AT+SAPBR=2,1", "OK", 2000);
     gprsOnline = true;
     digitalWrite(LED_PIN, HIGH);
     Serial.println(F("[GSM] GPRS ONLINE (APN: www)!\n"));
     return true;
   }
+
 
 
   Serial.println(F("[GSM] GPRS Connection Failed.\n"));

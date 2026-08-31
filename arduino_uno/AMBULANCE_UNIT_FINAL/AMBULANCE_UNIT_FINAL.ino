@@ -217,26 +217,45 @@ bool postTelemetry(float lat, float lng, float speedKmh, float headingDeg, int s
 
   Serial.print(F("[CELLULAR POST] Sending: ")); Serial.println(payload);
 
-  // Close any existing connection
-  sendAT("AT+CIPCLOSE", "OK", 1000);
-  delay(200);
-
   // Connect to backend via TCP Port 80
   Serial.println(F("[TCP] Connecting to tn-ambulance-backend.onrender.com:80..."));
-  if (!sendAT("AT+CIPSTART=\"TCP\",\"tn-ambulance-backend.onrender.com\",\"80\"", "CONNECT OK", 10000)) {
-    Serial.println(F("[TCP] Connection Failed."));
-    return false;
-  }
-
-  // Send HTTP Data
-  String sendCmd = String("AT+CIPSEND=") + httpRequest.length();
-  if (sendAT(sendCmd, ">", 3000)) {
-    gsm->print(httpRequest);
-    Serial.println(F("[TCP] Payload Transmitted. Waiting for 200 OK..."));
-  } else {
+  if (!sendAT("AT+CIPSTART=\"TCP\",\"tn-ambulance-backend.onrender.com\",\"80\"", "CONNECT OK", 12000)) {
+    Serial.println(F("[TCP] Connection Failed. Reconnecting GPRS..."));
     sendAT("AT+CIPCLOSE", "OK", 1000);
     return false;
   }
+
+  delay(300);
+  gsm->listen();
+  while (gsm->available()) gsm->read(); // clean buffer
+
+  // Send AT+CIPSEND and wait for '>' prompt
+  gsm->println(F("AT+CIPSEND"));
+  Serial.println(F("[GSM] >> AT+CIPSEND"));
+
+  unsigned long startPrompt = millis();
+  bool gotPrompt = false;
+  while (millis() - startPrompt < 4000) {
+    if (gsm->available()) {
+      char c = (char)gsm->read();
+      if (c == '>') {
+        gotPrompt = true;
+        break;
+      }
+    }
+  }
+
+  if (!gotPrompt) {
+    Serial.println(F("[GSM] No '>' prompt received."));
+    sendAT("AT+CIPCLOSE", "OK", 1000);
+    return false;
+  }
+
+  // Transmit HTTP Request followed by Ctrl+Z (ASCII 26)
+  gsm->print(httpRequest);
+  delay(100);
+  gsm->write(26); // Ctrl+Z to send packet
+  Serial.println(F("[TCP] HTTP Packet Transmitted! Waiting for response..."));
 
   // Wait for server response
   unsigned long startWait = millis();
@@ -244,7 +263,7 @@ bool postTelemetry(float lat, float lng, float speedKmh, float headingDeg, int s
   while (millis() - startWait < 8000) {
     if (gsm->available()) {
       String resp = gsm->readString();
-      Serial.print(F("[SERVER]: ")); Serial.println(resp);
+      Serial.print(F("[SERVER RESPONSE]: ")); Serial.println(resp);
       if (resp.indexOf("200 OK") != -1 || resp.indexOf("\"status\":\"ok\"") != -1) {
         success = true;
         break;
@@ -255,7 +274,9 @@ bool postTelemetry(float lat, float lng, float speedKmh, float headingDeg, int s
   sendAT("AT+CIPCLOSE", "OK", 1000);
 
   if (success) {
-    Serial.println(F("[OK] Telemetry Delivered via BSNL Cellular Successfully!\n"));
+    Serial.println(F("\n****************************************************"));
+    Serial.println(F("[SUCCESS!] Live Telemetry Delivered Over BSNL Cellular!"));
+    Serial.println(F("****************************************************\n"));
     digitalWrite(LED_PIN, LOW);
     delay(100);
     digitalWrite(LED_PIN, HIGH);
@@ -263,6 +284,7 @@ bool postTelemetry(float lat, float lng, float speedKmh, float headingDeg, int s
 
   return success;
 }
+
 
 // Universal Matrix Scanner for SIM800L
 bool scanAndLockSIM800L() {

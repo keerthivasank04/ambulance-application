@@ -73,6 +73,22 @@ bool sendAT(const String& cmd, const char* expected, unsigned long timeout = 300
   Serial.print(F("[GSM] << TIMEOUT: ")); Serial.println(resp);
   return false;
 }
+
+// Like sendAT but treats ERROR as non-fatal (for cleanup commands like HTTPTERM)
+void sendATSafe(const String& cmd, unsigned long timeout = 1500) {
+  gsm->listen();
+  while (gsm->available()) gsm->read();
+  gsm->println(cmd);
+  Serial.print(F("[GSM] >> ")); Serial.println(cmd);
+  unsigned long start = millis();
+  String resp = "";
+  while (millis() - start < timeout) {
+    while (gsm->available()) { char c = (char)gsm->read(); resp += c; }
+    if (resp.indexOf("OK") != -1 || resp.indexOf("ERROR") != -1) break;
+  }
+  Serial.print(F("[GSM] << ")); Serial.println(resp);
+}
+
 // Connect to BSNL 2G GPRS using direct TCP/IP Stack
 bool initGPRS() {
   digitalWrite(LED_PIN, LOW);
@@ -219,8 +235,9 @@ bool postTelemetry(float lat, float lng, float speedKmh, float headingDeg, int s
   delay(500);
 
   // ─── 2. Init HTTP stack ───────────────────────────────────────────────────
-  sendAT("AT+HTTPTERM", "OK", 1000);    // Close any previous session
+  sendATSafe("AT+HTTPTERM");    // Ignore error — expected if no prior session
   delay(300);
+
   if (!sendAT("AT+HTTPINIT", "OK", 3000)) {
     Serial.println(F("[HTTP] HTTPINIT failed!"));
     sendAT("AT+SAPBR=0,1", "OK", 2000);
@@ -234,33 +251,29 @@ bool postTelemetry(float lat, float lng, float speedKmh, float headingDeg, int s
   sendAT("AT+HTTPSSL=1", "OK", 2000);  // Enable HTTPS
 
   // ─── 3. Load POST body ───────────────────────────────────────────────────
+  // Use sendAT with "DOWNLOAD" as expected — SIM800L responds with "DOWNLOAD\r\n" prompt
   String dataCmd = String("AT+HTTPDATA=") + payload.length() + ",10000";
-  gsm->listen();
-  while (gsm->available()) gsm->read();
-  gsm->println(dataCmd);
-  delay(200);
-
-  // Wait for "DOWNLOAD" prompt
-  unsigned long t = millis();
-  bool gotDl = false;
-  String buf = "";
-  while (millis() - t < 5000) {
-    while (gsm->available()) {
-      char c = (char)gsm->read();
-      buf += c;
+  if (!sendAT(dataCmd, "DOWNLOAD", 6000)) {
+    Serial.println(F("[HTTP] HTTPDATA prompt failed! Retrying once..."));
+    delay(500);
+    if (!sendAT(dataCmd, "DOWNLOAD", 6000)) {
+      Serial.println(F("[HTTP] HTTPDATA failed twice. Aborting."));
+      sendATSafe("AT+HTTPTERM");
+      sendAT("AT+SAPBR=0,1", "OK", 2000);
+      return false;
     }
-    if (buf.indexOf("DOWNLOAD") != -1) { gotDl = true; break; }
   }
 
-  if (!gotDl) {
-    Serial.println(F("[HTTP] HTTPDATA prompt failed!"));
-    sendAT("AT+HTTPTERM", "OK", 1000);
-    sendAT("AT+SAPBR=0,1", "OK", 2000);
-    return false;
-  }
-
+  // Immediately write the payload bytes after DOWNLOAD prompt
+  delay(50);
+  gsm->listen();
   gsm->print(payload);
-  delay(500);
+  delay(600);  // Wait for SIM800L to absorb all bytes and return OK
+  // Drain the "OK" response
+  { String ack = ""; unsigned long t2 = millis();
+    while (millis() - t2 < 2000) { while (gsm->available()) ack += (char)gsm->read(); }
+    Serial.print(F("[HTTP] Data ack: ")); Serial.println(ack);
+  }
   Serial.println(F("[HTTP] Payload loaded. Executing POST..."));
 
   // ─── 4. Execute POST ──────────────────────────────────────────────────────
@@ -310,7 +323,7 @@ bool postTelemetry(float lat, float lng, float speedKmh, float headingDeg, int s
   }
 
   // ─── 6. Cleanup ──────────────────────────────────────────────────────────
-  sendAT("AT+HTTPTERM", "OK", 2000);
+  sendATSafe("AT+HTTPTERM");
   // Keep bearer open for next cycle (don't close SAPBR)
 
   return success;

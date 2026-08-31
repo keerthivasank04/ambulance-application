@@ -303,20 +303,33 @@ bool postTelemetry(float lat, float lng, float speedKmh, float headingDeg, int s
   gsm->println(F("AT+HTTPACTION=1"));
   Serial.println(F("[HTTP] >> AT+HTTPACTION=1 (POST)"));
 
-  // Wait up to 20 sec for +HTTPACTION response over 2G
+  // Wait up to 20 sec for +HTTPACTION URC over 2G
   unsigned long actionStart = millis();
-  static char actionBuf[60];
+  static char actionBuf[80];
   memset(actionBuf, 0, sizeof(actionBuf));
   uint8_t ai = 0;
+  bool foundTag = false;
+  unsigned long tagTime = 0;
+
   while (millis() - actionStart < 20000) {
-    while (gsm->available() && ai < 59) {
+    while (gsm->available() && ai < 79) {
       char c = (char)gsm->read();
       actionBuf[ai++] = c;
       Serial.write(c);
     }
-    if (strstr(actionBuf, "+HTTPACTION") != NULL) break;
+    if (!foundTag && strstr(actionBuf, "+HTTPACTION") != NULL) {
+      foundTag = true;
+      tagTime = millis();  // Found the tag — now wait extra time for full line
+    }
+    // Break only after full line received (has comma = status code present)
+    // or 2 seconds after tag if full line doesn't arrive
+    if (foundTag) {
+      if (strstr(actionBuf, ",200,") != NULL || strstr(actionBuf, ",40") != NULL ||
+          strstr(actionBuf, ",50") != NULL || millis() - tagTime > 2000) break;
+    }
   }
   Serial.println();
+  Serial.print(F("[HTTP] Full response: ")); Serial.println(actionBuf);
 
   bool success = (strstr(actionBuf, ",200,") != NULL);
 

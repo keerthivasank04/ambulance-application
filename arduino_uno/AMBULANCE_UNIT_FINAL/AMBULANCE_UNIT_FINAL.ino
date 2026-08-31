@@ -90,15 +90,30 @@ bool initGPRS() {
   delay(500);
   sendAT("AT+CFUN=1", "OK", 3000);   // Enable Full Phone Functionality / RF Radio
   delay(1000);
-  sendAT("AT+CPIN?", "READY", 3000); // Check SIM status
-  delay(500);
-  sendAT("AT+COPS=0", "OK", 3000);   // Auto-select network operator (BSNL)
-  sendAT("AT+CSQ", "OK", 1500);      // Signal strength
+
+  // Check SIM Card Status
+  gsm->listen();
+  while (gsm->available()) gsm->read();
+  gsm->println(F("AT+CPIN?"));
+  delay(800);
+  String cpinResp = "";
+  while (gsm->available()) cpinResp += (char)gsm->read();
+  Serial.print(F("[SIM STATUS] CPIN: ")); Serial.println(cpinResp);
+
+  // Check Signal Strength
+  gsm->println(F("AT+CSQ"));
+  delay(800);
+  String csqResp = "";
+  while (gsm->available()) csqResp += (char)gsm->read();
+  Serial.print(F("[SIGNAL] CSQ: ")); Serial.println(csqResp);
+
+  // Set Automatic Operator Search
+  sendAT("AT+COPS=0", "OK", 3000);
 
   // Wait for network registration (1 = home, 5 = roaming)
   Serial.println(F("[GSM] Waiting for BSNL cell tower registration..."));
   bool registered = false;
-  for (int i = 0; i < 20; i++) {
+  for (int i = 0; i < 25; i++) {
     gsm->listen();
     while (gsm->available()) gsm->read();
     gsm->println(F("AT+CREG?"));
@@ -111,8 +126,9 @@ bool initGPRS() {
       registered = true;
       break;
     }
-    delay(1000);
+    delay(1200);
   }
+
 
   if (!registered) {
     Serial.println(F("[GSM] Registration taking time. Retrying search..."));

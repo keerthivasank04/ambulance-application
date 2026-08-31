@@ -146,29 +146,48 @@ bool initGPRS() {
   sendAT("AT+CGATT=1", "OK", 4000);
   delay(500);
 
-  // Set APN to bsnlnet
-  sendAT("AT+CSTT=\"bsnlnet\",\"\",\"\"", "OK", 3000);
-  delay(500);
+  // APNs for BSNL Tamil Nadu
+  const char* apns[] = {"portalnmms", "bsnlnet", "bsnlstream", "www"};
 
-  // Bring up Wireless Connection (CIICR)
-  Serial.println(F("[GSM] Bringing up BSNL Wireless GPRS (AT+CIICR)..."));
-  if (sendAT("AT+CIICR", "OK", 15000)) {
-    delay(500);
-    
-    // Get Local IP Address (CIFSR)
-    gsm->listen();
-    while (gsm->available()) gsm->read();
-    gsm->println(F("AT+CIFSR"));
-    delay(1000);
-    String ipResp = "";
-    while (gsm->available()) ipResp += (char)gsm->read();
-    Serial.print(F("[BSNL IP ALLOCATED]: ")); Serial.println(ipResp);
+  for (int i = 0; i < 4; i++) {
+    const char* apn = apns[i];
+    Serial.print(F("[GSM] Trying APN: ")); Serial.println(apn);
 
-    if (ipResp.indexOf(".") != -1 && ipResp.indexOf("ERROR") == -1) {
-      gprsOnline = true;
-      digitalWrite(LED_PIN, HIGH);
-      Serial.println(F("[GSM] GPRS ONLINE (Direct TCP/IP Stack Active)!\n"));
-      return true;
+    sendAT("AT+CIPSHUT", "SHUT OK", 2000);
+    delay(300);
+    sendAT("AT+CIPMUX=0", "OK", 1000);
+    sendAT("AT+CIPRXGET=1", "OK", 1000);
+    sendAT("AT+CGATT=1", "OK", 3000);
+    delay(300);
+
+    String csttCmd = String("AT+CSTT=\"") + apn + "\",\"\",\"\"";
+    sendAT(csttCmd, "OK", 3000);
+    delay(400);
+
+    Serial.print(F("[GSM] Bringing up GPRS with ")); Serial.print(apn); Serial.println(F("..."));
+    if (sendAT("AT+CIICR", "OK", 12000)) {
+      delay(500);
+
+      // Get Local IP Address (CIFSR)
+      gsm->listen();
+      while (gsm->available()) gsm->read();
+      gsm->println(F("AT+CIFSR"));
+      delay(1000);
+      String ipResp = "";
+      while (gsm->available()) ipResp += (char)gsm->read();
+      Serial.print(F("[BSNL IP ALLOCATED]: ")); Serial.println(ipResp);
+
+      if (ipResp.indexOf(".") != -1 && ipResp.indexOf("ERROR") == -1) {
+        gprsOnline = true;
+        digitalWrite(LED_PIN, HIGH);
+        Serial.print(F("[GSM] GPRS ONLINE (Active APN: "));
+        Serial.print(apn);
+        Serial.println(F(")!\n"));
+        return true;
+      }
+    } else {
+      Serial.print(F("[GSM] APN ")); Serial.print(apn); Serial.println(F(" failed. Trying next..."));
+      delay(500);
     }
   }
 
@@ -176,6 +195,7 @@ bool initGPRS() {
   gprsOnline = false;
   return false;
 }
+
 
 // Send HTTP POST over Direct TCP Socket
 bool postTelemetry(float lat, float lng, float speedKmh, float headingDeg, int sats) {
